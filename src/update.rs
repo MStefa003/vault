@@ -347,6 +347,23 @@ mod network_tests {
         let r = super::check();
         eprintln!("check(): {r:?}");
         assert!(r.is_ok(), "{r:?}");
+        // What an older install sees: the latest release, downloaded and
+        // verified with the built-in key.
+        let url = format!(
+            "https://api.github.com/repos/{}/releases/latest",
+            super::REPO
+        );
+        if let Ok(json) = crate::os_protect::http_get(&url, super::MAX_API_BYTES) {
+            if let Some(rel) = super::parse_latest(&json, super::Version(0, 0, 1)).unwrap() {
+                let exe = super::download(&rel).expect("download and verify");
+                eprintln!(
+                    "v{} downloaded and verified: {} bytes",
+                    rel.version,
+                    exe.len()
+                );
+                assert!(exe.starts_with(b"MZ"));
+            }
+        }
         // Plain http and other schemes are refused before connecting.
         assert_eq!(
             crate::os_protect::http_get("http://github.com/", 10),
