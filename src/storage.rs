@@ -200,6 +200,92 @@ fn sync_parent_dir(_path: &Path) {
     // on Windows.
 }
 
+/// Folder for automatic backups: `<vault file name>.backups` next to it.
+pub fn auto_backup_dir(vault_path: &Path) -> PathBuf {
+    let dir = vault_path.parent().unwrap_or_else(|| Path::new("."));
+    let name = vault_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "vault".into());
+    dir.join(format!("{name}.backups"))
+}
+
+fn auto_backup_prefix(vault_path: &Path) -> String {
+    let stem = vault_path
+        .file_stem()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "vault".into());
+    format!("{stem}-auto-")
+}
+
+/// Automatic backups of `vault_path`, newest first. Names carry a sortable
+/// UTC timestamp: `<stem>-auto-YYYYMMDD-HHMMSS.vault`.
+pub fn list_auto_backups(vault_path: &Path) -> Vec<PathBuf> {
+    let dir = auto_backup_dir(vault_path);
+    let prefix = auto_backup_prefix(vault_path);
+    let suffix = format!(".{VAULT_EXTENSION}");
+    let mut found: Vec<PathBuf> = fs::read_dir(&dir)
+        .map(|rd| {
+            rd.flatten()
+                .filter(|e| {
+                    let n = e.file_name().to_string_lossy().into_owned();
+                    n.starts_with(&prefix) && n.ends_with(&suffix)
+                })
+                .map(|e| e.path())
+                .collect()
+        })
+        .unwrap_or_default();
+    found.sort();
+    found.reverse();
+    found
+}
+
+/// Write `bytes` (an encrypted vault image) as a new automatic backup unless
+/// the newest one is younger than `min_interval_secs`, then delete all but
+/// the newest `keep` backups.
+pub fn write_rotating_backup(
+    vault_path: &Path,
+    bytes: &[u8],
+    keep: usize,
+    now: i64,
+    min_interval_secs: i64,
+) -> Result<()> {
+    let prefix = auto_backup_prefix(vault_path);
+    let existing = list_auto_backups(vault_path);
+    let newest_allowed = format!(
+        "{prefix}{}",
+        crate::timeutil::file_stamp(now - min_interval_secs)
+    );
+    let recent = existing.first().is_some_and(|p| {
+        min_interval_secs > 0
+            && p.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .is_some_and(|n| n.as_str() > newest_allowed.as_str())
+    });
+    if !recent {
+        let dir = auto_backup_dir(vault_path);
+        fs::create_dir_all(&dir)?;
+        let mut name = format!(
+            "{prefix}{}.{VAULT_EXTENSION}",
+            crate::timeutil::file_stamp(now)
+        );
+        // Two forced backups within the same second get distinct names.
+        let mut n = 1;
+        while dir.join(&name).exists() {
+            n += 1;
+            name = format!(
+                "{prefix}{}-{n}.{VAULT_EXTENSION}",
+                crate::timeutil::file_stamp(now)
+            );
+        }
+        atomic_write(&dir.join(name), bytes, WriteMode::CreateNew)?;
+    }
+    for old in list_auto_backups(vault_path).into_iter().skip(keep.max(1)) {
+        let _ = fs::remove_file(old);
+    }
+    Ok(())
+}
+
 /// Ensure a path ends in `.vault`.
 pub fn with_vault_extension(path: PathBuf) -> PathBuf {
     match path.extension() {
@@ -287,6 +373,29 @@ mod tests {
         move_no_overwrite(&a, &c).unwrap();
         assert!(!a.exists());
         assert_eq!(fs::read(&c).unwrap(), b"a");
+    }
+
+    #[test]
+    fn rotating_backups_respect_interval_and_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("Personal.vault");
+        let t0 = 1_700_000_000;
+        write_rotating_backup(&p, b"v1", 3, t0, 3600).unwrap();
+        // Within the interval: no new copy.
+        write_rotating_backup(&p, b"v2", 3, t0 + 60, 3600).unwrap();
+        assert_eq!(list_auto_backups(&p).len(), 1);
+        for i in 1..=5 {
+            write_rotating_backup(&p, format!("v{i}").as_bytes(), 3, t0 + i * 3601, 3600).unwrap();
+        }
+        let all = list_auto_backups(&p);
+        assert_eq!(all.len(), 3, "only the newest three are kept");
+        assert_eq!(fs::read(&all[0]).unwrap(), b"v5");
+        assert_eq!(fs::read(&all[2]).unwrap(), b"v3");
+        assert!(all[0].parent().unwrap().ends_with("Personal.vault.backups"));
+        // Forced backups ignore the interval and never collide.
+        write_rotating_backup(&p, b"f1", 10, t0 + 5 * 3601, 0).unwrap();
+        write_rotating_backup(&p, b"f2", 10, t0 + 5 * 3601, 0).unwrap();
+        assert_eq!(list_auto_backups(&p).len(), 5);
     }
 
     #[test]

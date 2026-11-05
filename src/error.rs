@@ -34,6 +34,9 @@ pub enum VaultError {
     #[error("incorrect master password, or the vault header has been modified")]
     WrongPasswordOrTampered,
 
+    #[error("this vault also needs its key file to unlock")]
+    KeyFileRequired,
+
     /// The key unwrapped correctly but the payload did not authenticate.
     #[error(
         "vault contents failed authentication: the file is corrupted or has been tampered with"

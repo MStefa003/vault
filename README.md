@@ -1,9 +1,11 @@
 # VaultRust
 
-A strictly local, offline password safe for Windows, written entirely in Rust.
+A local password safe for Windows, written entirely in Rust.
 
 * **One encrypted file.** Your vault is a single `.vault` file stored wherever
-  you choose. No database, no cloud, no account, no telemetry, no network code.
+  you choose. No database, no cloud, no account, no telemetry. Your vault never
+  leaves your computer; the only network use is an optional daily check for
+  signed updates on GitHub.
 * **Modern cryptography.** Argon2id key derivation, XChaCha20-Poly1305
   authenticated encryption, a random 256-bit vault key, OS-provided randomness
   and memory wiping on lock. See [docs/SECURITY.md](docs/SECURITY.md).
@@ -14,21 +16,70 @@ A strictly local, offline password safe for Windows, written entirely in Rust.
 * Logins, email accounts, secure notes, credit cards, identities, API keys,
   servers, databases, Wi-Fi networks and fully custom items with your own
   fields
+* **One-time codes (TOTP)**: paste a site's 2FA setup key or `otpauth://`
+  link and VaultRust shows the current code with a countdown — offline
+* **Tags**, sorting (name, recently used, modified, created) and fuzzy search
+  (`gml` finds Gmail) over titles, tags, usernames and websites
+* **Password history**: replaced passwords are kept (last 10 per item)
+* **Trash**: deleted items can be restored for 30 days, or straight away with
+  Undo (or Ctrl+Z) in the notification that appears
+* **Scan two-step codes**: while setting up 2FA on a site, click "Scan 2FA
+  code" — VaultRust reads the QR code from your screen and adds the code to
+  the matching login (or starts a new one named after the site). No setup key
+  to copy
+* **Less typing**: items without a title are named after their website, and
+  the usernames and emails you use most are one click away
+* **Automatic updates**: when a new version is published on
+  [GitHub](https://github.com/MStefa003/vault/releases), VaultRust offers to
+  install it. Releases are signed, and an update is only installed if its
+  signature checks out. Turn the daily check off in Settings
+* **Attachments**: keep recovery codes, key files or document scans inside an
+  item, encrypted with the rest of the vault (up to 10 MB per file, 50 MB per
+  vault)
+* **Start with Windows** (optional): VaultRust opens minimized, locked, when
+  you sign in, or waits in the notification area
+* **Auto-type**: click into a login form in any browser or app and press
+  Ctrl+Shift+L; pick the item (ones matching the window come first) and
+  VaultRust types username, Tab, password, Enter. Shift+Enter types only the
+  password, Ctrl+Enter the one-time code. Items can have their own sequence,
+  e.g. `{USERNAME}{ENTER}{DELAY 1500}{PASSWORD}{ENTER}` for two-page logins
+* **Windows Hello**: unlock with fingerprint, face or PIN (the master
+  password is still needed once after VaultRust starts)
+* **Expiry reminders**: give items an expiry date (API keys, work passwords);
+  expired cards are detected from their printed date. Both appear under
+  Needs attention
+* **Activity log**: unlocks, exports, imports, backups and password changes,
+  recorded inside the encrypted vault
+* **Light and dark themes**, following Windows by default
+* **Notification-area icon** with open / quick open / lock / quit; optionally
+  (Settings) closing the window locks the vault and keeps VaultRust running
+  there, with quick open and auto-type ready
+* **Quick open**: Ctrl+K in the app, or Ctrl+Shift+Space from anywhere in
+  Windows; Enter copies the password, Shift+Enter the username, Ctrl+Enter
+  the one-time code
 * Password generator (length, character sets, ambiguous-character exclusion,
   custom characters) and passphrase generator, with entropy estimates
-* Security center: weak, reused and old passwords
-* Automatic lock after inactivity, manual lock (Ctrl+L), lock on minimize
+* Security center: weak, reused and old passwords, plus an **offline
+  breached-password check** against a local Have I Been Pwned list
+* Automatic lock after inactivity, manual lock (Ctrl+L), lock on minimize and
+  **lock when Windows locks** (Win+L, sleep with sign-in, switching user)
+* Optional **key file** as a second factor
+* Master passwords are Unicode-normalised, so accented passwords always match
 * Window hidden from screenshots and screen sharing while unlocked; revealed
-  secrets re-masked automatically; growing delay after wrong passwords
+  secrets re-masked automatically; growing delay after wrong passwords; the
+  master password is asked again before exporting or turning protection off
 * Never silently overwrites changes made to the vault file by another window
   or program
 * Keyboard shortcuts: Ctrl+F search, Ctrl+N new item, Ctrl+S save, Esc cancel;
-  right-click an item to copy its username or password
+  right-click an item to copy its username, password or one-time code
 * Concealed fields with explicit reveal; copy with automatic clipboard clearing
   (excluded from Windows clipboard history and cloud sync)
-* Create, open, rename and move vaults; verified encrypted backups and restore
-* Import from CSV (Chrome, Edge, Firefox, Bitwarden, LastPass, 1Password,
-  KeePass, …) and Bitwarden JSON; plaintext CSV export behind explicit warnings
+* Create, open, rename and move vaults; verified encrypted backups and restore;
+  **automatic hourly backups** (last 10 kept, next to the vault)
+* Import **KeePass databases (.kdbx 3.1 / 4.x)**, CSV (Chrome, Edge, Firefox,
+  Bitwarden, LastPass, 1Password, KeePass, …) and Bitwarden JSON; items already
+  in the vault are skipped, and changed passwords can update the existing item;
+  plaintext CSV export behind explicit warnings
 * Crash-safe atomic saves; never overwrites a file without confirmation
 
 ## Build and run
@@ -58,23 +109,45 @@ cargo run --release --example demo_vault -- "$env:TEMP\Demo.vault" "demo master 
 ## Backups are your responsibility
 
 VaultRust never uploads or syncs anything, so it cannot recover your data for
-you. Use **Settings → Create encrypted backup** regularly and keep copies on a
-separate drive. There is no master password recovery: if you forget it, the
-vault cannot be opened.
+you. It keeps automatic encrypted copies in `<vault file>.backups` next to the
+vault; these protect against mistakes, not against losing the drive. Use
+**Back up** regularly and keep copies on a separate drive. There is no master
+password recovery: if you forget it (or lose the key file, if you use one),
+the vault cannot be opened.
+
+## Offline breached-password check
+
+VaultRust never goes online, so it checks against a list you download
+yourself: get the SHA-1 Pwned Passwords list as a single file ordered by hash
+(for example with the official Have I Been Pwned `PwnedPasswordsDownloader`)
+and choose it under **Settings → Breached-password check**. The file is
+searched in place with a few dozen small reads per password, so the full
+~40 GB list works.
 
 ## Testing and auditing
 
 ```powershell
 cargo test                                             # unit, integration and headless UI tests
 powershell -ExecutionPolicy Bypass -File scripts\audit.ps1   # fmt, clippy, test, deny, audit, network scan
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1 0.2.0   # publish a release (docs/RELEASING.md)
+cargo +nightly fuzz run kdbx                           # fuzzing (cargo-fuzz; targets in fuzz/)
 ```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs the audit script and a
+release build on Windows, the headless core library on Linux, and a short
+fuzzing pass over every target on each push and pull request.
 
 The tests cover vault creation, correct/incorrect passwords, encryption
 round-trips, tamper detection (every header byte, sampled payload bytes,
 truncation, payload swapping), interrupted writes, backup verification and
 restore, master password changes (payload unchanged), nonce uniqueness,
 persistence of every field type, automatic locking, zeroization, and
-inspection of the raw vault file for plaintext leaks. Headless UI tests
+inspection of the raw vault file (and its automatic backups) for plaintext
+leaks. Key files, Unicode normalisation, automatic backups, the trash,
+password history and upgrades from every earlier payload schema are covered
+too. TOTP is checked against the RFC 6238 test vectors, and KeePass import
+against databases written by an independent implementation (pykeepass,
+`tests/fixtures/kdbx`). Headless UI tests
 (`egui_kittest`) render every screen and exercise unlocking, locking and
 creating items.
 
@@ -89,20 +162,33 @@ cargo test --lib render_screenshots -- --ignored
 
 ```text
 src/
-  crypto.rs         Argon2id, XChaCha20-Poly1305, CSPRNG, key wrapping
+  crypto.rs         Argon2id, XChaCha20-Poly1305, CSPRNG, key wrapping, key files
   format.rs         versioned binary file format, bounded parser, AAD
-  storage.rs        atomic writes, no-overwrite moves, temp-file cleanup
-  vault.rs          create / open / save / change password / backup / restore
-  model.rs          entry types and fields (zeroized on drop)
+  storage.rs        atomic writes, no-overwrite moves, temp-file cleanup,
+                    rotating automatic backups
+  vault.rs          create / open / save / change password or key file /
+                    backup / restore, Unicode normalisation
+  model.rs          entries, fields, tags, history, trash (zeroized on drop)
   generator.rs      password + passphrase generation (wordlist.txt)
   analysis.rs       strength estimation, weak/reused/old detection
+  breach.rs         offline lookup in a sorted Have I Been Pwned SHA-1 list
+  totp.rs           RFC 6238 one-time codes, otpauth:// parsing
+  autotype.rs       window matching and keystroke sequences for auto-type
+  hello.rs          Windows Hello quick unlock (TPM-backed key credential)
+  prefs.rs          app-level theme / close-button preferences
+  kdbx.rs           KeePass 3.1 / 4.x import
+  encoding.rs       Base32 / Base64 / percent decoding
   import_export.rs  CSV / JSON import, plaintext CSV export
   session.rs        inactivity auto-lock timer
   clipboard.rs      copy with clearing and Windows history exclusion
+  os_protect.rs     all unsafe code: capture exclusion, session-lock
+                    detection, crash-report hardening, global hotkeys,
+                    auto-type keystrokes
   recent.rs         recently opened vault paths
   ui/               egui screens (welcome, create, unlock, dashboard, items,
-                    generator, security center, settings, modals)
-tests/              end-to-end vault file tests
+                    trash, generator, security center, settings, modals)
+tests/              end-to-end vault tests, KeePass fixtures, robustness
+fuzz/               cargo-fuzz targets for every parser of untrusted input
 docs/SECURITY.md    cryptographic design and limitations
 deny.toml           dependency policy (advisories, licences, network bans)
 ```

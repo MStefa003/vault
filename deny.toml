@@ -3,9 +3,10 @@
 #   cargo deny check
 #
 # Besides advisories / licences / sources, the [bans] section enforces the
-# "no network code" rule: any crate that provides HTTP, TLS, sockets, DNS or
-# an async network runtime is rejected if it enters the shipped dependency
-# graph. Dev-only dependencies (test harnesses) are excluded because they are
+# "no bundled network code" rule: any crate that provides HTTP, TLS, sockets,
+# DNS or an async network runtime is rejected if it enters the shipped
+# dependency graph. (The update check uses Windows' WinHTTP directly; see
+# docs/SECURITY.md.) Dev-only dependencies (test harnesses) are excluded because they are
 # never part of the application binary.
 
 [graph]

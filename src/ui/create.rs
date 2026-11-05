@@ -12,10 +12,112 @@ use super::theme::*;
 use super::widgets::{self, card, centered_column};
 use super::{Services, Transition};
 use crate::analysis::estimate_strength;
-use crate::crypto::KdfParams;
+use crate::crypto::{KdfParams, KeyFile};
 use crate::error::VaultError;
-use crate::storage::with_vault_extension;
-use crate::vault::{UnlockedVault, MIN_MASTER_PASSWORD_CHARS};
+use crate::storage::{self, with_vault_extension, WriteMode};
+use crate::vault::{Credentials, UnlockedVault, MIN_MASTER_PASSWORD_CHARS};
+
+/// A key file picked in a dialog (an existing file, or one just created).
+#[derive(Default)]
+pub struct KeyFileChoice {
+    path: Option<PathBuf>,
+    /// Created by VaultRust just now (show the "keep a copy" reminder).
+    created: bool,
+    error: Option<String>,
+}
+
+impl KeyFileChoice {
+    pub fn is_chosen(&self) -> bool {
+        self.path.is_some()
+    }
+
+    /// Hash the chosen key file. `Ok(None)` if none is chosen.
+    pub fn load(&self) -> Result<Option<KeyFile>, String> {
+        match &self.path {
+            None => Ok(None),
+            Some(p) => KeyFile::from_path(p)
+                .map(Some)
+                .map_err(|e| format!("Couldn't read the key file: {e}")),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        *self = KeyFileChoice::default();
+    }
+}
+
+/// Path row with "Choose…", optionally "Create new…", and a clear button.
+pub fn key_file_picker(ui: &mut egui::Ui, choice: &mut KeyFileChoice, allow_create: bool) {
+    let shown = choice
+        .path
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "No key file".into());
+    let (mut pick, mut create, mut clear) = (false, false, false);
+    widgets::truncated_path_row(ui, &shown, |ui| {
+        if choice.path.is_some() {
+            clear = widgets::icon_button(ui, icons::X, "Don't use a key file").clicked();
+        }
+        if allow_create {
+            create = widgets::secondary_button(ui, "Create new…").clicked();
+        }
+        pick = widgets::secondary_button(ui, "Choose…").clicked();
+    });
+    if pick {
+        if let Some(p) = rfd::FileDialog::new()
+            .set_title("Choose key file")
+            .pick_file()
+        {
+            *choice = KeyFileChoice {
+                path: Some(p),
+                ..Default::default()
+            };
+        }
+    }
+    if create {
+        let mut dlg = rfd::FileDialog::new()
+            .set_title("Save new key file")
+            .set_file_name("vault.keyfile");
+        if let Some(d) = documents_dir() {
+            dlg = dlg.set_directory(d);
+        }
+        if let Some(p) = dlg.save_file() {
+            let contents = KeyFile::generate_contents();
+            // A key file is never silently replaced: overwriting one could
+            // lock the user out of another vault.
+            *choice = match storage::atomic_write(&p, &contents, WriteMode::CreateNew) {
+                Ok(()) => KeyFileChoice {
+                    path: Some(p),
+                    created: true,
+                    error: None,
+                },
+                Err(VaultError::AlreadyExists) => KeyFileChoice {
+                    error: Some(
+                        "A file with that name already exists; key files are never overwritten."
+                            .into(),
+                    ),
+                    ..Default::default()
+                },
+                Err(e) => KeyFileChoice {
+                    error: Some(format!("Couldn't save the key file: {e}")),
+                    ..Default::default()
+                },
+            };
+        }
+    }
+    if clear {
+        choice.clear();
+    }
+    if let Some(e) = &choice.error {
+        widgets::error_text(ui, e);
+    } else if choice.created {
+        ui.label(
+            RichText::new("New key file saved. Keep a copy somewhere safe — without it the vault cannot be opened.")
+                .size(12.0)
+                .color(warn()),
+        );
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KdfPreset {
@@ -57,6 +159,7 @@ pub struct CreateState {
     confirm: Zeroizing<String>,
     reveal: bool,
     preset: KdfPreset,
+    key_file: KeyFileChoice,
     acknowledged: bool,
     error: Option<String>,
     confirm_overwrite: bool,
@@ -72,6 +175,7 @@ impl Default for CreateState {
             confirm: secret_buffer(),
             reveal: false,
             preset: KdfPreset::Standard,
+            key_file: KeyFileChoice::default(),
             acknowledged: false,
             error: None,
             confirm_overwrite: false,
@@ -110,12 +214,22 @@ impl CreateState {
         let Some(path) = self.path.clone() else {
             return;
         };
-        let pw = SecretString::from(self.password.as_str().to_owned());
+        let key_file = match self.key_file.load() {
+            Ok(k) => k,
+            Err(e) => {
+                self.error = Some(e);
+                return;
+            }
+        };
+        let creds = Credentials::with_key_file(
+            SecretString::from(self.password.as_str().to_owned()),
+            key_file,
+        );
         let params = self.preset.params();
         let name = self.name.trim().to_string();
         self.error = None;
         self.job = Some(Job::spawn(ctx, move || {
-            UnlockedVault::create(&path, &pw, params, &name, overwrite)
+            UnlockedVault::create_with(&path, &creds, params, &name, overwrite)
         }));
     }
 
@@ -164,7 +278,7 @@ pub fn show(ctx: &egui::Context, s: &mut CreateState, _svc: &mut Services) -> Op
     let busy = s.job.is_some();
 
     egui::CentralPanel::default()
-        .frame(Frame::new().fill(BG).inner_margin(24.0))
+        .frame(Frame::new().fill(bg()).inner_margin(24.0))
         .show(ctx, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.add_space(((ui.available_height() - 640.0) / 2.0).max(16.0));
@@ -219,7 +333,7 @@ pub fn show(ctx: &egui::Context, s: &mut CreateState, _svc: &mut Services) -> Op
                             widgets::password_input(ui, &mut s.confirm, &mut reveal2, "");
                             s.reveal = reveal2;
                             if !s.confirm.is_empty() && *s.confirm != *s.password {
-                                ui.label(RichText::new("Doesn't match").color(DANGER).size(12.5));
+                                ui.label(RichText::new("Doesn't match").color(danger()).size(12.5));
                             }
                             ui.add_space(6.0);
 
@@ -236,12 +350,22 @@ pub fn show(ctx: &egui::Context, s: &mut CreateState, _svc: &mut Services) -> Op
                                                 ui.selectable_value(&mut s.preset, p, p.label());
                                             }
                                         });
+                                    ui.add_space(8.0);
+                                    ui.label(small("Key file (optional second factor)"));
+                                    key_file_picker(ui, &mut s.key_file, true);
+                                    ui.label(faint(
+                                        "With a key file, the vault opens only with both the password and the file.",
+                                    ));
                                 });
                             ui.add_space(8.0);
 
                             widgets::warning_box(
                                 ui,
-                                "A forgotten master password cannot be recovered or reset — not even by you.",
+                                if s.key_file.is_chosen() {
+                                    "A forgotten master password or a lost key file cannot be recovered — not even by you."
+                                } else {
+                                    "A forgotten master password cannot be recovered or reset — not even by you."
+                                },
                             );
                             ui.checkbox(&mut s.acknowledged, "I understand");
                         });

@@ -3,7 +3,7 @@ name = "vaultrust"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.90"
-description = "VaultRust - a strictly local, offline password safe"
+description = "VaultRust - a local password safe"
 license = "MIT"
 publish = false
 
@@ -14,14 +14,37 @@ path = "src/lib.rs"
 [[bin]]
 name = "vaultrust"
 path = "src/main.rs"
+required-features = ["gui"]
+
+# Signs release builds (run by the release workflow; see docs/RELEASING.md).
+[[bin]]
+name = "vaultrust-sign"
+path = "src/bin/sign.rs"
+required-features = ["release-tools"]
+
+[features]
+default = ["gui"]
+release-tools = []
+# The desktop front end. Without it the library (crypto, format, storage,
+# model, import/export) builds headless, which the fuzz targets rely on.
+gui = ["dep:eframe", "dep:rfd", "dep:arboard", "dep:egui-phosphor", "dep:raw-window-handle", "dep:tray-icon", "dep:ab_glyph", "dep:rqrr"]
 
 [dependencies]
+# Verifies the signature on downloaded updates (and signs releases).
+ed25519-compact = { version = "2.1", default-features = false }
 # --- Cryptography -----------------------------------------------------------
 argon2 = { version = "0.5", default-features = false, features = ["alloc", "zeroize"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 zeroize = { version = "1.8", features = ["derive"] }
 secrecy = "0.10"
+# Key-file hashing, TOTP (HMAC-SHA1/256/512) and the offline breach check
+# (SHA-1 lookups in a Have I Been Pwned list).
+sha1 = "0.10"
+sha2 = "0.10"
+hmac = "0.12"
+# Master passwords are NFC-normalised so visually identical input matches.
+unicode-normalization = "0.1"
 
 # --- Serialization (vault payload, bounded) ----------------------------------
 serde = { version = "1", features = ["derive"] }
@@ -30,25 +53,72 @@ postcard = { version = "1", default-features = false, features = ["alloc"] }
 # --- Import / export (explicit, user initiated, in memory) -------------------
 csv = "1.3"
 serde_json = "1"
+# KeePass (.kdbx 3.1 / 4.x) import: outer ciphers, inner stream ciphers,
+# gzip and XML.
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+chacha20 = "0.9"
+salsa20 = "0.10"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+roxmltree = "0.20"
 
 thiserror = "2"
 
 # --- Desktop UI (native, no webview) -----------------------------------------
-eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "accesskit"] }
-rfd = { version = "0.15", default-features = false }
-arboard = { version = "3.4", default-features = false }
+eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "accesskit"], optional = true }
+rfd = { version = "0.15", default-features = false, optional = true }
+arboard = { version = "3.4", default-features = false, optional = true }
 # Phosphor icon font (font data only).
-egui-phosphor = "0.11"
-raw-window-handle = "0.6"
+egui-phosphor = { version = "0.11", optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+# Notification-area (system tray) icon and its menu.
+tray-icon = { version = "0.21", default-features = false, optional = true }
+# Rasterises icon-font glyphs for the tray menu (already used by egui).
+ab_glyph = { version = "0.2", optional = true }
+# Reads two-step-verification QR codes from a screenshot (src/qr.rs).
+rqrr = { version = "0.11", default-features = false, optional = true }
 
 [target.'cfg(windows)'.dependencies]
-# Used for exactly one call: SetWindowDisplayAffinity (hide the window from
-# screenshots / screen sharing). See src/os_protect.rs.
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+# Win32 calls, all in src/os_protect.rs: SetWindowDisplayAffinity (hide the
+# window from screen capture), OpenInputDesktop (detect a locked session),
+# RegisterHotKey + a message loop (global quick-open shortcut) and
+# WerSetFlags / SetErrorMode (keep the heap out of crash reports) and the
+# per-user Run registry value (start with Windows).
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_StationsAndDesktops",
+    "Win32_System_ErrorReporting",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Threading",
+    "Win32_System_Registry",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_HiDpi",
+    "Win32_Graphics_Gdi",
+    "Win32_Networking_WinHttp",
+] }
+# Windows Hello quick unlock (src/hello.rs): a TPM-backed key credential
+# signs a fixed challenge after the user's fingerprint, face or PIN.
+windows = { version = "0.62", features = [
+    "Security_Credentials",
+    "Security_Cryptography",
+    "Storage_Streams",
+    "Foundation",
+] }
 
 [dev-dependencies]
-egui_kittest = { version = "0.33", features = ["wgpu", "snapshot"] }
 tempfile = "3"
+# Draws QR codes for the scanner tests.
+qrcode = { version = "0.14", default-features = false }
+
+# Headless UI tests; the app (and its UI) is Windows-only.
+[target.'cfg(windows)'.dev-dependencies]
+egui_kittest = { version = "0.33", features = ["wgpu", "snapshot"] }
+
+[lints.rust]
+# Set by cargo-fuzz for the targets in fuzz/.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
 
 # Debug info is what makes `target\` grow into gigabytes. Keep only line
 # tables for our own code (enough for panic locations and backtraces) and

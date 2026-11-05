@@ -9,7 +9,8 @@
 //! offset size  field
 //!      0    8  magic  "VAULTRS\x1A"
 //!      8    2  format version (1)
-//!     10    1  KDF algorithm id     (1 = Argon2id v1.3)
+//!     10    1  KDF algorithm id     (1 = Argon2id v1.3,
+//!                                    2 = Argon2id v1.3 with a key file)
 //!     11    1  AEAD algorithm id    (1 = XChaCha20-Poly1305)
 //!     12   16  vault id (random, fixed for the lifetime of the vault)
 //!     28    4  Argon2 memory cost (KiB)
@@ -26,9 +27,12 @@
 //! Associated data:
 //! * key wrap: `"VaultRust/key-wrap/v1" || bytes[0..72]` — binds the wrapped key
 //!   to the vault identity, version, algorithms, KDF parameters and salt.
-//! * payload:  `"VaultRust/payload/v1" || bytes[0..28]` — binds the payload to
-//!   the vault identity, version and algorithms, but *not* to the password
-//!   wrapping, so a master password change only rewrites the header.
+//! * payload:  `"VaultRust/payload/v1" || magic || version || 0x01 || 0x01 ||
+//!   vault id` — binds the payload to the vault identity and version, but
+//!   *not* to the password wrapping, so a master password (or key file)
+//!   change only rewrites the header. The KDF id in the payload AAD is always
+//!   the constant 1: whether a key file is used is a property of the key
+//!   wrapping, which the key-wrap AAD already covers.
 
 use crate::crypto::{KdfParams, KEY_LEN, NONCE_LEN, SALT_LEN, TAG_LEN};
 use crate::error::{Result, VaultError};
@@ -36,6 +40,8 @@ use crate::error::{Result, VaultError};
 pub const MAGIC: [u8; 8] = *b"VAULTRS\x1A";
 pub const FORMAT_VERSION: u16 = 1;
 pub const KDF_ARGON2ID_V13: u8 = 1;
+/// Argon2id v1.3 with the SHA-256 of a key file as the Argon2 secret input.
+pub const KDF_ARGON2ID_V13_KEYFILE: u8 = 2;
 pub const AEAD_XCHACHA20_POLY1305: u8 = 1;
 
 pub const VAULT_ID_LEN: usize = 16;
@@ -69,6 +75,8 @@ pub struct Header {
     pub salt: [u8; SALT_LEN],
     pub wrap_nonce: [u8; NONCE_LEN],
     pub wrapped_key: [u8; WRAPPED_KEY_LEN],
+    /// Unlocking also requires a key file.
+    pub key_file: bool,
 }
 
 /// A complete parsed vault file. Contains only public or encrypted data.
@@ -86,7 +94,11 @@ impl Header {
         let mut b = [0u8; OFF_WRAP_NONCE];
         b[..8].copy_from_slice(&MAGIC);
         b[OFF_VERSION..OFF_VERSION + 2].copy_from_slice(&FORMAT_VERSION.to_le_bytes());
-        b[OFF_KDF_ALG] = KDF_ARGON2ID_V13;
+        b[OFF_KDF_ALG] = if self.key_file {
+            KDF_ARGON2ID_V13_KEYFILE
+        } else {
+            KDF_ARGON2ID_V13
+        };
         b[OFF_AEAD_ALG] = AEAD_XCHACHA20_POLY1305;
         b[OFF_VAULT_ID..OFF_M_COST].copy_from_slice(&self.vault_id);
         b[OFF_M_COST..OFF_T_COST].copy_from_slice(&self.kdf.m_cost_kib.to_le_bytes());
@@ -145,8 +157,12 @@ impl VaultFile {
         if version != FORMAT_VERSION {
             return Err(VaultError::UnsupportedVersion(version));
         }
-        if bytes[OFF_KDF_ALG] != KDF_ARGON2ID_V13 || bytes[OFF_AEAD_ALG] != AEAD_XCHACHA20_POLY1305
-        {
+        let key_file = match bytes[OFF_KDF_ALG] {
+            KDF_ARGON2ID_V13 => false,
+            KDF_ARGON2ID_V13_KEYFILE => true,
+            _ => return Err(VaultError::UnsupportedAlgorithm),
+        };
+        if bytes[OFF_AEAD_ALG] != AEAD_XCHACHA20_POLY1305 {
             return Err(VaultError::UnsupportedAlgorithm);
         }
         let kdf = KdfParams {
@@ -177,6 +193,7 @@ impl VaultFile {
                 salt: arr(bytes, OFF_SALT),
                 wrap_nonce: arr(bytes, OFF_WRAP_NONCE),
                 wrapped_key: arr(bytes, OFF_WRAPPED_KEY),
+                key_file,
             },
             payload_nonce: arr(bytes, OFF_PAYLOAD_NONCE),
             payload: bytes[HEADER_LEN..].to_vec(),
@@ -205,6 +222,7 @@ mod tests {
                 salt: [2; 32],
                 wrap_nonce: [3; 24],
                 wrapped_key: [4; 48],
+                key_file: false,
             },
             payload_nonce: [5; 24],
             payload: vec![6; 100],
@@ -300,6 +318,13 @@ mod tests {
         let mut h = f.clone();
         h.header.kdf.t_cost += 1;
         assert_ne!(f.header.key_wrap_aad(), h.header.key_wrap_aad());
+
+        // Turning a key file on or off changes the key wrap, not the payload.
+        let mut k = f.clone();
+        k.header.key_file = true;
+        assert_ne!(f.header.key_wrap_aad(), k.header.key_wrap_aad());
+        assert_eq!(f.header.payload_aad(), k.header.payload_aad());
+        assert_eq!(VaultFile::from_bytes(&k.to_bytes()).unwrap(), k);
 
         let mut i = f.clone();
         i.header.vault_id[0] ^= 1;

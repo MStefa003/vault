@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows · fmt, clippy, tests, cargo-deny, cargo-audit, network scan
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-audit
+      # The same gate developers run locally (see README).
+      - name: Audit script
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File scripts/audit.ps1
+      - name: Release build
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File scripts/build.ps1 -KeepCache
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VaultRust-${{ github.sha }}
+          path: dist/VaultRust.exe
+          if-no-files-found: error
+
+  headless:
+    name: Linux · core library without the GUI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --lib --no-default-features -- -D warnings
+      - run: cargo test --lib --no-default-features
+      - run: cargo test --no-default-features --test credentials_and_backups --test robustness --test vault_integration
+
+  fuzz:
+    name: Linux · fuzz smoke test (60 s per target)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Run every target
+        run: |
+          for t in $(cargo fuzz list); do
+            echo "::group::$t"
+            cargo fuzz run "$t" -- -max_total_time=60 -rss_limit_mb=1024
+            echo "::endgroup::"
+          done
+      - name: Keep crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts

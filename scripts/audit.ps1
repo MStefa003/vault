@@ -18,7 +18,8 @@ Step "cargo deny check" { cargo deny check }
 Step "cargo audit" { cargo audit }
 
 # Network isolation: list every crate compiled into the Windows binary and
-# fail on anything that looks like networking. `url` and `webbrowser` are
+# fail on anything that looks like networking. (The update check uses
+# Windows' WinHTTP through windows-sys, so no networking crate is needed.) `url` and `webbrowser` are
 # expected (pulled in by egui-winit for hyperlinks; neither opens sockets,
 # and VaultRust strips every open-URL command each frame).
 Step "network crate scan" {

@@ -1,0 +1,63 @@
+[package]
+name = "vaultrust-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+secrecy = "0.10"
+# The headless library: no GUI crates, so the targets build on Linux CI.
+vaultrust = { path = "..", default-features = false }
+
+# Keep this crate out of the main package's (non-existent) workspace.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "vault_file"
+path = "fuzz_targets/vault_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "payload"
+path = "fuzz_targets/payload.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import_csv"
+path = "fuzz_targets/import_csv.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import_json"
+path = "fuzz_targets/import_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kdbx"
+path = "fuzz_targets/kdbx.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "totp"
+path = "fuzz_targets/totp.rs"
+test = false
+doc = false
+bench = false

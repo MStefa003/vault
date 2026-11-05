@@ -1,0 +1,56 @@
+name: Release
+
+# Pushing a tag like v0.2.0 builds, tests, signs and publishes a release.
+# Installed copies of VaultRust find it with their update check.
+# See docs/RELEASING.md.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Tag matches Cargo.toml version
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          if ("v$v" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match Cargo.toml version $v" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build
+        run: cargo build --release --locked --bin vaultrust
+
+      - name: Sign
+        shell: pwsh
+        env:
+          VAULTRUST_SIGNING_KEY: ${{ secrets.VAULTRUST_SIGNING_KEY }}
+        run: |
+          if (-not $env:VAULTRUST_SIGNING_KEY) { throw "Add the VAULTRUST_SIGNING_KEY secret (docs/RELEASING.md)" }
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item target/release/vaultrust.exe release/VaultRust.exe
+          cargo run --release --locked --no-default-features --features release-tools --bin vaultrust-sign -- sign release/VaultRust.exe ${{ steps.version.outputs.version }} release/VaultRust.exe.sig
+          cargo run --release --locked --no-default-features --features release-tools --bin vaultrust-sign -- verify release/VaultRust.exe ${{ steps.version.outputs.version }} release/VaultRust.exe.sig
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/VaultRust.exe
+            release/VaultRust.exe.sig
+          generate_release_notes: true

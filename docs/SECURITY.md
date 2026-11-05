@@ -31,6 +31,46 @@ vault key ──XChaCha20-Poly1305 decrypt──▶ vault payload
   re-wraps the same vault key. The encrypted payload is not touched (this is
   verified byte-for-byte in `tests/vault_integration.rs`).
 * The master password is never stored, logged or written anywhere.
+* **Unicode normalisation.** The password is converted to Normalization Form C
+  before key derivation, so the same visible text typed with composed or
+  decomposed accents (which differ by keyboard layout and input method)
+  produces the same key. Vaults created before this used the raw bytes; if
+  the NFC attempt fails and the typed password was not already NFC, the raw
+  form is tried as well (one extra Argon2 run, only in that case).
+
+### Windows Hello (optional)
+
+Windows Hello keeps an RSA key pair for VaultRust in the TPM; the private key
+cannot be exported and each use needs the user's fingerprint, face or PIN.
+Turning Hello on (which first asks for the master password) has Hello sign
+`SHA-256("VaultRust/hello-challenge/v1" ‖ vault id ‖ random salt)` twice. The
+two signatures must be identical (RSA PKCS#1 v1.5 is deterministic), and
+SHA-256 of the signature becomes a key that encrypts, with XChaCha20-Poly1305,
+a copy of the vault key and the key-file digest (if the vault uses one). The
+result is stored in `%APPDATA%\VaultRust\hello\<vault id>.bin`.
+
+* Without this computer's TPM and the user's Hello gesture the file cannot be
+  decrypted; copying it elsewhere is useless.
+* Hello is only offered after the vault was unlocked with its master password
+  since VaultRust started, so a stolen, powered-off laptop still needs the
+  password.
+* Anyone who can pass Windows Hello on this account (for example someone who
+  knows the Windows PIN) can unlock the vault while VaultRust is running and
+  has been unlocked once. Leave Hello off if that is a concern.
+* Changing the master password does not change the vault key, so Hello keeps
+  working; turning Hello off deletes the file.
+
+### Key files (optional)
+
+A vault can additionally require a key file. Its SHA-256 digest is passed to
+Argon2id as the *secret* input (`K`), so neither the password nor the file
+alone derives the KEK. VaultRust can create a 64-byte random key file; any
+existing file up to 16 MiB can also be used. Whether a key file is needed is
+recorded as KDF algorithm id 2 in the header, which the key-wrap AAD covers,
+so stripping the requirement makes unwrapping fail (tested). Adding, changing
+or removing the key file only rewraps the vault key, like a password change.
+While unlocked, the key file's digest stays in memory next to the vault key,
+so re-confirming the master password does not need the file again.
 
 ## Algorithms
 
@@ -67,7 +107,7 @@ A vault is a single file. All integers are little-endian.
 offset size  field
      0    8  magic "VAULTRS\x1A"
      8    2  format version (1)
-    10    1  KDF algorithm id    (1 = Argon2id v1.3)
+    10    1  KDF algorithm id    (1 = Argon2id v1.3, 2 = Argon2id v1.3 + key file)
     11    1  AEAD algorithm id   (1 = XChaCha20-Poly1305)
     12   16  vault id (random)
     28    4  Argon2 memory cost (KiB)
@@ -87,10 +127,11 @@ offset size  field
   key to the magic, version, algorithm ids, vault id, KDF parameters and salt.
   Changing any of them (e.g. downgrading the Argon2 cost) makes unwrapping
   fail.
-* Payload: `"VaultRust/payload/v1" ‖ magic ‖ version ‖ algorithm ids ‖ vault id`.
+* Payload: `"VaultRust/payload/v1" ‖ magic ‖ version ‖ 0x01 ‖ 0x01 ‖ vault id`.
   This binds the ciphertext to its vault, so the payload of one vault cannot be
   swapped into another (tested). It deliberately excludes the password-wrapping
-  fields so that a password change only rewrites the header.
+  fields so that a password or key-file change only rewrites the header; the
+  KDF id in it is therefore always the constant 1.
 
 **Parsing is bounded and fails closed.** The header is fixed-size and read with
 bounds-checked slices. Argon2 parameters are range-checked *before* any key
@@ -124,9 +165,24 @@ tampered with, and VaultRust reports exactly that.
   backup and moving the vault refuse to replace an existing file unless the user
   explicitly confirms in VaultRust's own dialog (moving never overwrites).
 * **No plaintext side files.** No temporary, cache, log or config file contains
-  vault data. The only file VaultRust writes outside the vault is
-  `%APPDATA%\VaultRust\recent.txt`, a list of recently opened vault *paths*
-  (clearable from Settings). All preferences live inside the encrypted vault.
+  vault data. Outside the vault VaultRust writes only, under
+  `%APPDATA%\VaultRust\`: `recent.txt` (recently opened vault *paths*,
+  clearable from Settings), `prefs.txt` (theme and close-button choice, which
+  must be known before unlocking) and, if Windows Hello is on, the encrypted
+  `hello\<vault id>.bin` described above. Every vault setting lives inside
+  the encrypted vault. "Start with Windows" adds one value, `VaultRust`, to
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` holding the program's
+  path; turning it off deletes it.
+* **QR scanning** takes one screenshot of all monitors only when the user
+  clicks a scan button. It stays in memory, is converted to greyscale, searched
+  for a QR code and wiped; it is never written to disk. Only an `otpauth://`
+  link is used; any other QR code is ignored. While screen-capture protection
+  is on, VaultRust's own window is not in the screenshot.
+* **Attachments** are stored inside the encrypted payload like every other
+  field and are covered by the same authentication. Saving one to disk ("Save
+  to a file…") writes an ordinary, unencrypted file wherever the user chooses;
+  VaultRust says so and records it in the activity log. File names are cleaned
+  of path separators before being offered in the save dialog.
 * **Backups** are exact copies of the encrypted vault file. After writing, the
   backup is read back, decrypted with the in-memory key and compared with the
   open vault. Restoring decrypts and authenticates the backup with its password
@@ -138,10 +194,18 @@ tampered with, and VaultRust reports exactly that.
   read or wrote. If another VaultRust window, a sync tool or a restore changed
   (or deleted) it, nothing is written; the user chooses between reloading and
   explicitly overwriting. Tested with two sessions on one file.
+* **Automatic backups.** Before a save, if the newest automatic backup is more
+  than an hour old, the vault file as it was on disk is copied to
+  `<vault file>.backups\<name>-auto-<UTC time>.vault`; the newest 10 are kept
+  (configurable, 0 turns it off). When the user chooses to overwrite a version
+  changed by another window or program, that other version is always kept
+  first. These are exact copies of the encrypted file, verified identical to
+  what was on disk, and keep the password and key file in effect when made.
+  A failed automatic backup never blocks a save; the user is told.
 * **Payload schema versioning.** postcard is not self-describing, so every past
-  payload layout is kept and upgraded on load (schemas 1 and 2 → 3 are
-  tested). Vaults
-  written by a newer VaultRust are refused rather than misread.
+  payload layout is kept and upgraded on load (schemas 1 to 5 → 6 are
+  tested). Vaults written by a newer VaultRust are refused rather than
+  misread.
 
 ## Memory handling — best effort, not a guarantee
 
@@ -154,6 +218,11 @@ tampered with, and VaultRust reports exactly that.
   after use.
 * On lock VaultRust also clears egui's per-widget memory (text-edit undo
   history).
+
+* **Crash reports.** At start-up VaultRust asks Windows Error Reporting to
+  leave the heap out of crash reports (`WER_FAULT_REPORTING_FLAG_NOHEAP`) and
+  suppresses the crash dialog. A full dump configured by an administrator
+  (`LocalDumps`) or a debugger is not prevented.
 
 **Limitations.** Rust and the OS do not give full control over memory. Copies of
 secrets can survive in: freed allocations from string growth while typing, the
@@ -177,6 +246,19 @@ exclusion flags.
 * Automatic lock after a configurable inactivity period (1–240 minutes,
   default 5). Activity means keyboard, mouse or scroll input in the window.
 * Manual lock (button or Ctrl+L) and optional lock-on-minimize.
+* Lock when Windows locks (on by default): about once a second VaultRust checks
+  whether the interactive desktop can be opened (`OpenInputDesktop`). That
+  fails while the session is locked, on the sign-in screen after sleep (when
+  Windows requires sign-in on wake, the default) and after switching user. It
+  also fails while a UAC prompt is on the secure desktop; locking then too is
+  deliberate.
+* Sensitive actions — the plaintext export, turning off screen-capture
+  protection and turning on Windows Hello — ask for the master password again
+  (a full Argon2 check).
+* With "Keep running in the notification area" on (it is off by default),
+  closing the window locks the vault before hiding it: a hidden window may
+  receive no frames, so the inactivity timer could not be relied on to lock
+  it later.
 * Revealed secrets are masked again automatically (default 30 s).
 * After three wrong master passwords the unlock screen imposes a growing delay
   (1 s doubling to 30 s). This only slows guessing at an unattended VaultRust
@@ -192,17 +274,43 @@ window is captured as black). It can be turned off in Settings. This stops
 accidental exposure (screen sharing, screenshot tools); it is not a defence
 against malware with high privileges or a camera.
 
-This is the only `unsafe` code in VaultRust: one Win32 call in
-`src/os_protect.rs`. Everything else is compiled under `deny(unsafe_code)`.
+All `unsafe` code in VaultRust is in `src/os_protect.rs`: this call, the
+session-lock check, the crash-report flags, the global hotkeys
+(`RegisterHotKey` plus a message loop on its own thread; a press only brings
+the window forward and opens quick open or the auto-type picker — nothing is
+read, copied or typed until the user acts) and auto-type's `SendInput`. Everything else is compiled under `deny(unsafe_code)`.
 
-## Network isolation
+## Network use: updates only
 
-VaultRust contains no network code and needs no network connection.
+Vault data never touches the network. The one network feature is the update
+check (`src/update.rs`), which can be turned off in Settings.
 
-* No HTTP client, TLS, sockets, DNS, async runtime, telemetry, crash reporter
-  or self-updater is present in the dependency graph. `deny.toml` bans these
-  crates and `cargo deny check` enforces it; `scripts/audit.ps1` additionally
-  scans the exact list of crates compiled into the Windows binary.
+* **What is contacted.** Once a day (and when the user clicks "Check now")
+  VaultRust asks `api.github.com` for the latest release of
+  `MStefa003/vault`. If the user then chooses "Update and restart", it
+  downloads `VaultRust.exe` and `VaultRust.exe.sig` from that release
+  (GitHub redirects downloads to its file servers). Nothing else is sent
+  besides what any HTTPS request carries: the IP address and a `VaultRust/x.y.z`
+  user agent. No identifiers, no vault data, no usage data.
+* **How.** Windows' WinHTTP, HTTPS only (TLS 1.2 or newer, Windows' own
+  certificate validation), redirects never downgraded to plain HTTP, size
+  limits on every response. No networking crate is bundled: `deny.toml` still
+  bans HTTP clients, TLS libraries, async runtimes and self-update crates, and
+  `scripts/audit.ps1` scans the shipped dependency graph for them.
+* **Signed releases.** The release workflow signs
+  `"VaultRust release v1\n" ‖ version ‖ "\n" ‖ SHA-256(program)` with an
+  Ed25519 key kept as a GitHub Actions secret (and offline by the maintainer).
+  The public key is compiled into VaultRust. An update is installed only if
+  the signature verifies **and** the version is newer than the running one, so
+  a compromised GitHub account, a replaced release file or a man in the middle
+  cannot install a modified program or roll back to an older one. Losing the
+  signing key would mean future updates must be installed by hand.
+* **Installing.** The new program is written next to the old one, the running
+  program is renamed to `VaultRust.old.exe` (deleted on the next start) and the
+  new one takes its place; if any step fails the old program is put back.
+  The vault is locked (and saved) before VaultRust restarts.
+* If VaultRust is installed somewhere it cannot write (e.g. Program Files),
+  installing fails safely and the user is asked to download the release.
 * `eframe` unconditionally depends on `webbrowser` (to open clicked hyperlinks
   by launching the system browser) and `url`. Neither opens sockets. VaultRust
   never creates hyperlinks and removes every open-URL command from egui's output
@@ -210,14 +318,73 @@ VaultRust contains no network code and needs no network connection.
 * Fonts are read from the local Windows font directory or egui's bundled
   fonts — never downloaded.
 * Windows Cloud Clipboard sync is opted out for copied secrets (see above).
+* The breached-password check reads a local file the user downloaded
+  themselves; see below.
+
+## Breached-password check
+
+If the user chooses a local copy of the Have I Been Pwned SHA-1 list, the SHA-1
+of each stored password is looked up by binary search in that file (it is
+never loaded whole). Only hashes are compared; nothing leaves the computer.
+The list's path is stored inside the encrypted vault. The check runs in the
+background whenever passwords change.
+
+## Activity log
+
+The vault records unlocks (and whether Windows Hello was used), exports,
+imports, backups, restores, item password changes, master-password or
+key-file changes, items deleted for good, and protections switched off — with
+times and item titles or file names. It is part of the encrypted payload (at
+most 500 events), so only someone who can unlock the vault can read it, and
+it can't be used to monitor the vault from outside. An unlock event makes the
+vault "changed", so it is saved when the vault locks.
+
+## One-time codes and history
+
+* One-time-code secrets are stored like any other concealed field; only the
+  current code is displayed. Codes are computed locally (RFC 6238, tested
+  against its published vectors).
+* Password history keeps up to 10 replaced passwords per item, and the Trash
+  keeps deleted items for 30 days. Both live inside the encrypted payload, but
+  they do mean an old password remains in the vault until it ages out or the
+  user deletes it from the Trash.
+
+## Auto-type
+
+Pressing Ctrl+Shift+L records which window was in front (its handle and
+title), brings VaultRust forward and shows a picker headed with that window's
+title. Items whose website or title matches the window title are listed
+first, but window titles are chosen by web pages and can imitate any site, so
+nothing is typed until the user picks an item. VaultRust then activates the
+recorded window and sends the keystrokes with `SendInput` as Unicode
+characters, so they arrive correctly on any keyboard layout.
+
+* Before every keystroke the foreground window is checked; if anything else
+  took focus (a pop-up, the user clicking elsewhere), typing stops at once so
+  the rest of the password does not go to the wrong window.
+* Typing waits until Ctrl, Shift, Alt and Windows keys are released.
+* The `INPUT` structures that carried characters are overwritten after use;
+  the typed strings are zeroized when the typing thread finishes.
+* Simulated keystrokes are visible to anything that can observe keyboard input
+  on the machine (keyloggers, hooks), just as real typing is. Windows does not
+  let a normal process type into an application running as administrator;
+  VaultRust reports that instead of failing silently.
+* The shortcut is not Ctrl+Alt+…, because on many keyboard layouts Ctrl+Alt is
+  AltGr and a system-wide shortcut on it would break typing characters.
 
 ## Import and export
 
-* Import (CSV from Chrome/Edge/Firefox/Bitwarden/LastPass/1Password/KeePass and
-  similar, Bitwarden unencrypted JSON, generic JSON arrays) is always user
-  initiated. The file is read into a zeroizing buffer and parsed in memory;
-  nothing derived from it is written to disk except inside the encrypted vault.
-  The user is reminded to delete the plaintext source file themselves.
+* Import (KeePass `.kdbx` 3.1 and 4.x, CSV from Chrome/Edge/Firefox/Bitwarden/
+  LastPass/1Password/KeePass and similar, Bitwarden unencrypted JSON, generic
+  JSON arrays) is always user initiated. The file is read into a zeroizing
+  buffer and parsed in memory; nothing derived from it is written to disk
+  except inside the encrypted vault. The user is reminded to delete plaintext
+  source files themselves.
+* KeePass databases are decrypted with the password the user enters (AES-256 or
+  ChaCha20; AES-KDF, Argon2d or Argon2id; Salsa20 or ChaCha20 protected
+  values). Header HMACs and block checksums are verified; key-derivation cost
+  and decompressed size are capped so a crafted file cannot hang the app or
+  exhaust memory. Key-file-protected and Twofish databases are refused.
 * The only plaintext export is a CSV export behind a prominent warning, a
   checkbox and typing `EXPORT`. VaultRust never creates exports automatically
   and never uploads anything.
@@ -231,9 +398,6 @@ best protection for old vault copies is a strong master password.
 
 ## Other known limitations
 
-* **Unicode normalization.** The master password is used as typed (UTF-8
-  bytes). Visually identical passwords entered with different Unicode
-  normalization (e.g. composed vs. decomposed accents) will not match.
 * **Concurrent use.** Two windows editing the same vault cannot silently
   overwrite each other (see conflict detection), but the user must choose which
   version to keep; changes are not merged.
@@ -251,4 +415,6 @@ powershell -ExecutionPolicy Bypass -File scripts\audit.ps1
 ```
 
 runs `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`,
-`cargo deny check`, `cargo audit` and the network-crate scan.
+`cargo deny check`, `cargo audit` and the network-crate scan. CI runs it on
+every push, plus fuzzing of the vault parser, payload decoder, CSV/JSON/KeePass
+importers and TOTP parser (`fuzz/`).

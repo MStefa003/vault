@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 use crate::generator::wordlist;
-use crate::model::{EntryKind, VaultData};
+use crate::model::{EntryKind, VaultData, EXPIRY_WARNING_DAYS};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Strength {
@@ -396,13 +396,19 @@ pub struct WeakPassword {
 #[derive(Debug, Clone, Default)]
 pub struct HealthReport {
     pub total_passwords: usize,
+    /// Passwords rated fair (neither weak nor strong).
+    pub fair: usize,
     pub weak: Vec<WeakPassword>,
     /// Groups of two or more locations sharing an identical password.
     pub reused: Vec<Vec<PasswordRef>>,
     /// Entries whose password has not changed for over a year.
     pub old: Vec<u64>,
-    /// Card / identity entries with an expiry in the past are not tracked;
-    /// this is purely about passwords.
+    /// Entries past their expiry date (explicit, or a card's printed one),
+    /// with that date, soonest first.
+    pub expired: Vec<(u64, i64)>,
+    /// Entries expiring within [`EXPIRY_WARNING_DAYS`], soonest first.
+    pub expiring: Vec<(u64, i64)>,
+    /// 0-100, from password strength and reuse only.
     pub score: u32,
 }
 
@@ -415,8 +421,22 @@ impl HealthReport {
         self.reused.iter().flatten().any(|r| r.entry_id == entry_id)
     }
 
+    /// The expiry date of an entry that is expired or expiring soon.
+    pub fn expiry(&self, entry_id: u64) -> Option<i64> {
+        self.expired
+            .iter()
+            .chain(&self.expiring)
+            .find(|(id, _)| *id == entry_id)
+            .map(|(_, at)| *at)
+    }
+
     pub fn is_weak(&self, entry_id: u64) -> bool {
         self.weak.iter().any(|w| w.at.entry_id == entry_id)
+    }
+
+    /// Passwords rated strong or very strong.
+    pub fn strong(&self) -> usize {
+        self.total_passwords - self.weak.len() - self.fair
     }
 }
 
@@ -444,6 +464,8 @@ pub fn analyze(data: &VaultData, now: i64) -> HealthReport {
                     at: at.clone(),
                     strength: s,
                 });
+            } else if s == Strength::Fair {
+                report.fair += 1;
             }
             by_value.entry(field.value.as_str()).or_default().push(at);
         }
@@ -456,6 +478,18 @@ pub fn analyze(data: &VaultData, now: i64) -> HealthReport {
     }
     report.reused = by_value.into_values().filter(|v| v.len() > 1).collect();
     report.reused.sort_by_key(|g| std::cmp::Reverse(g.len()));
+
+    for entry in &data.entries {
+        if let Some(at) = entry.effective_expiry() {
+            if at <= now {
+                report.expired.push((entry.id, at));
+            } else if at - now <= EXPIRY_WARNING_DAYS * 86_400 {
+                report.expiring.push((entry.id, at));
+            }
+        }
+    }
+    report.expired.sort_by_key(|(_, at)| *at);
+    report.expiring.sort_by_key(|(_, at)| *at);
 
     for entry in &data.entries {
         for (i, f) in entry.fields.iter().enumerate() {
@@ -487,6 +521,31 @@ pub fn analyze(data: &VaultData, now: i64) -> HealthReport {
 mod tests {
     use super::*;
     use crate::model::{Entry, EntryKind};
+
+    #[test]
+    fn expired_and_expiring_items_are_reported() {
+        let now = 1_700_000_000;
+        let mut v = VaultData::new("t");
+        let mut past = Entry::new(EntryKind::ApiKey);
+        past.expires = now - 10;
+        let mut soon = Entry::new(EntryKind::Login);
+        soon.expires = now + 3 * 86_400;
+        let mut later = Entry::new(EntryKind::Login);
+        later.expires = now + 60 * 86_400;
+        let mut card = Entry::new(EntryKind::CreditCard);
+        card.fields[2].value = "01/20".into();
+        let ids = (past.id, soon.id, later.id, card.id);
+        for e in [past, soon, later, card] {
+            v.upsert(e);
+        }
+        let r = analyze(&v, now);
+        let expired: Vec<u64> = r.expired.iter().map(|(id, _)| *id).collect();
+        assert_eq!(expired, [ids.3, ids.0], "soonest first");
+        assert_eq!(r.expiring.len(), 1);
+        assert_eq!(r.expiring[0].0, ids.1);
+        assert_eq!(r.expiry(ids.1), Some(now + 3 * 86_400));
+        assert_eq!(r.expiry(ids.2), None);
+    }
 
     #[test]
     fn common_passwords_are_very_weak() {

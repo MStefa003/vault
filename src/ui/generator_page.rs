@@ -58,8 +58,8 @@ impl GenState {
 /// Two-option segmented control.
 fn segmented(ui: &mut egui::Ui, mode: &mut Mode) {
     Frame::new()
-        .fill(SURFACE)
-        .stroke(Stroke::new(1.0, BORDER))
+        .fill(surface())
+        .stroke(Stroke::new(1.0, border()))
         .corner_radius(7.0)
         .inner_margin(3.0)
         .show(ui, |ui| {
@@ -71,12 +71,12 @@ fn segmented(ui: &mut egui::Ui, mode: &mut Mode) {
                 ] {
                     let on = *mode == m;
                     let b = egui::Button::new(RichText::new(label).color(if on {
-                        TEXT
+                        text()
                     } else {
-                        TEXT_DIM
+                        text_dim()
                     }))
                     .fill(if on {
-                        SURFACE_2
+                        surface_2()
                     } else {
                         egui::Color32::TRANSPARENT
                     })
@@ -98,11 +98,11 @@ fn colored_secret(text: &str) -> egui::text::LayoutJob {
     let font = egui::FontId::monospace(20.0);
     for c in text.chars() {
         let color = if c.is_ascii_digit() {
-            ACCENT
+            accent()
         } else if c.is_alphabetic() {
-            TEXT
+            super::theme::text()
         } else {
-            WARN
+            warn()
         };
         let mut buf = [0u8; 4];
         job.append(
@@ -117,9 +117,9 @@ fn colored_secret(text: &str) -> egui::text::LayoutJob {
 /// Toggleable pill.
 fn chip(ui: &mut egui::Ui, on: &mut bool, label: &str) -> egui::Response {
     let (fill, stroke, color) = if *on {
-        (ACCENT_BG, ACCENT_FILL, TEXT)
+        (accent_bg(), accent_fill(), text())
     } else {
-        (SURFACE_2, BORDER, TEXT_DIM)
+        (surface_2(), border(), text_dim())
     };
     let resp = ui
         .add(
@@ -161,8 +161,8 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
             ui.add_space(10.0);
 
             Frame::new()
-                .fill(INPUT)
-                .stroke(Stroke::new(1.0, BORDER))
+                .fill(input())
+                .stroke(Stroke::new(1.0, border()))
                 .corner_radius(RADIUS)
                 .inner_margin(egui::Margin::symmetric(16, 14))
                 .show(ui, |ui| {
@@ -185,7 +185,7 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
                         |ui| match &st.error {
                             Some(e) => {
                                 ui.add(
-                                    egui::Label::new(RichText::new(e.as_str()).color(DANGER))
+                                    egui::Label::new(RichText::new(e.as_str()).color(danger()))
                                         .wrap(),
                                 );
                             }
@@ -206,7 +206,7 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
                             egui::vec2(ui.available_width(), 3.0),
                             egui::Sense::hover(),
                         );
-                        ui.painter().rect_filled(rect, 1.5, RAIL);
+                        ui.painter().rect_filled(rect, 1.5, rail());
                         let mut part = rect;
                         part.set_width(rect.width() * est.strength.fraction());
                         ui.painter().rect_filled(part, 1.5, color);

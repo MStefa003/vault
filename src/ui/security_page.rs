@@ -2,13 +2,13 @@
 
 use eframe::egui::{self, Align2, Color32, CursorIcon, FontId, Rect, RichText, Sense, Vec2};
 
-use super::icons::{self, kind_icon};
+use super::icons;
 use super::main_view::{MainState, Nav};
 use super::theme::*;
 use super::widgets;
 use super::Services;
 use crate::model::Entry;
-use crate::timeutil::{age_description, now_unix};
+use crate::timeutil::{age_description, expiry_description, now_unix};
 
 pub fn show(ui: &mut egui::Ui, ms: &mut MainState, _svc: &mut Services) {
     let mut open = None;
@@ -28,6 +28,55 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, _svc: &mut Services) {
                 h.old.len()
             ));
             ui.add_space(20.0);
+
+            match &ms.breach.report {
+                Some(b) if b.error.is_none() => {
+                    heading(ui, "Found in data breaches", b.hits.len());
+                    if b.hits.is_empty() {
+                        ui.label(dim("None of your passwords appear in the list."));
+                    } else {
+                        ui.label(faint(
+                            "These exact passwords are known to attackers. Change them, even if they look strong.",
+                        ));
+                        ui.add_space(2.0);
+                        widgets::group(ui, |ui| {
+                            for (n, (r, count)) in b.hits.iter().enumerate() {
+                                let Some(e) = data.entry(r.entry_id) else { continue };
+                                if n > 0 {
+                                    widgets::divider(ui, 14.0);
+                                }
+                                let seen = if *count > 1 {
+                                    format!("Seen {count} times")
+                                } else {
+                                    "Breached".to_string()
+                                };
+                                if issue_row(ui, e, &seen, danger()).clicked() {
+                                    open = Some(e.id);
+                                }
+                            }
+                        });
+                    }
+                    ui.add_space(20.0);
+                }
+                Some(b) => {
+                    widgets::warning_box(ui, b.error.as_deref().unwrap_or_default());
+                    ui.add_space(20.0);
+                }
+                None if ms.breach.is_running() => {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new());
+                        ui.label(dim("Checking passwords against the breach list…"));
+                    });
+                    ui.add_space(20.0);
+                }
+                None => {
+                    ui.label(faint(format!(
+                        "{}  Add a Have I Been Pwned list in Settings to also check for breached passwords, offline.",
+                        icons::INFO
+                    )));
+                    ui.add_space(20.0);
+                }
+            }
 
             heading(ui, "Weak passwords", h.weak.len());
             if h.weak.is_empty() {
@@ -61,7 +110,7 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, _svc: &mut Services) {
                         if n > 0 {
                             widgets::divider(ui, 14.0);
                         }
-                        if issue_row(ui, e, "Reused", WARN).clicked() {
+                        if issue_row(ui, e, "Reused", warn()).clicked() {
                             open = Some(e.id);
                         }
                     }
@@ -69,6 +118,27 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, _svc: &mut Services) {
                 ui.add_space(10.0);
             }
             ui.add_space(10.0);
+
+            let now = now_unix();
+            for (title, list) in [("Expired", &h.expired), ("Expiring soon", &h.expiring)] {
+                if list.is_empty() {
+                    continue;
+                }
+                heading(ui, title, list.len());
+                widgets::group(ui, |ui| {
+                    for (n, (id, at)) in list.iter().enumerate() {
+                        let Some(e) = data.entry(*id) else { continue };
+                        if n > 0 {
+                            widgets::divider(ui, 14.0);
+                        }
+                        let color = if *at <= now { danger() } else { warn() };
+                        if issue_row(ui, e, &expiry_description(*at, now), color).clicked() {
+                            open = Some(e.id);
+                        }
+                    }
+                });
+                ui.add_space(20.0);
+            }
 
             heading(ui, "Old passwords", h.old.len());
             if h.old.is_empty() {
@@ -82,12 +152,14 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, _svc: &mut Services) {
                             widgets::divider(ui, 14.0);
                         }
                         let when = format!("Changed {}", age_description(e.password_changed, now));
-                        if issue_row(ui, e, &when, TEXT_DIM).clicked() {
+                        if issue_row(ui, e, &when, text_dim()).clicked() {
                             open = Some(e.id);
                         }
                     }
                 });
             }
+            ui.add_space(20.0);
+            activity_log(ui, &data.audit);
             ui.add_space(16.0);
             ui.label(faint(format!(
                 "{}  Strength is an estimate. See docs/SECURITY.md for what VaultRust can and can't protect against.",
@@ -101,9 +173,9 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, _svc: &mut Services) {
 
 fn score_card(ui: &mut egui::Ui, score: u32, summary: &str) {
     let (color, verdict) = match score {
-        90..=100 => (ACCENT, "Excellent"),
-        70..=89 => (WARN, "Could be better"),
-        _ => (DANGER, "Needs attention"),
+        90..=100 => (accent(), "Excellent"),
+        70..=89 => (warn(), "Could be better"),
+        _ => (danger(), "Needs attention"),
     };
     widgets::card(ui, |ui| {
         ui.horizontal(|ui| {
@@ -124,7 +196,7 @@ fn score_card(ui: &mut egui::Ui, score: u32, summary: &str) {
         ui.add_space(8.0);
         let (rect, _) =
             ui.allocate_exact_size(Vec2::new(ui.available_width(), 4.0), Sense::hover());
-        ui.painter().rect_filled(rect, 2.0, RAIL);
+        ui.painter().rect_filled(rect, 2.0, rail());
         let mut part = rect;
         part.set_width(rect.width() * score.min(100) as f32 / 100.0);
         ui.painter().rect_filled(part, 2.0, color);
@@ -138,7 +210,7 @@ fn heading(ui: &mut egui::Ui, title: &str, count: usize) {
             ui.label(
                 RichText::new(count.to_string())
                     .size(12.5)
-                    .color(TEXT_FAINT),
+                    .color(text_faint()),
             );
         }
     });
@@ -151,17 +223,17 @@ fn issue_row(ui: &mut egui::Ui, e: &Entry, status: &str, color: Color32) -> egui
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 40.0), Sense::click());
     if resp.hovered() {
         ui.painter()
-            .rect_filled(rect.expand2(Vec2::new(8.0, 2.0)), 6.0, ROW_HOVER);
+            .rect_filled(rect.expand2(Vec2::new(8.0, 2.0)), 6.0, row_hover());
     }
     let tile = Rect::from_center_size(rect.left_center() + Vec2::new(14.0, 0.0), Vec2::splat(28.0));
-    widgets::kind_tile(ui, tile, kind_icon(e.kind));
+    widgets::entry_tile(ui, tile, e);
     let p = ui.painter_at(rect);
     p.text(
         rect.right_center(),
         Align2::RIGHT_CENTER,
         icons::CARET_RIGHT,
         FontId::proportional(13.0),
-        if resp.hovered() { TEXT } else { TEXT_FAINT },
+        if resp.hovered() { text() } else { text_faint() },
     );
     let status_rect = p.text(
         rect.right_center() - Vec2::new(24.0, 0.0),
@@ -178,7 +250,7 @@ fn issue_row(ui: &mut egui::Ui, e: &Entry, status: &str, color: Color32) -> egui
         Align2::LEFT_CENTER,
         e.display_title(),
         FontId::proportional(14.0),
-        TEXT,
+        text(),
     );
     if !sub.is_empty() {
         tp.text(
@@ -186,8 +258,54 @@ fn issue_row(ui: &mut egui::Ui, e: &Entry, status: &str, color: Color32) -> egui
             Align2::LEFT_CENTER,
             sub,
             FontId::proportional(12.0),
-            TEXT_FAINT,
+            text_faint(),
         );
     }
     resp.on_hover_cursor(CursorIcon::PointingHand)
+}
+
+/// Newest-first list of what happened to this vault (stored encrypted
+/// inside it). Exports and switched-off protections stand out.
+fn activity_log(ui: &mut egui::Ui, events: &[crate::model::AuditEvent]) {
+    heading(ui, "Activity", events.len());
+    if events.is_empty() {
+        ui.label(dim("Nothing recorded yet."));
+        return;
+    }
+    ui.label(faint("Recorded inside the encrypted vault; times are UTC."));
+    ui.add_space(2.0);
+    widgets::group(ui, |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("activity")
+            .max_height(260.0)
+            .show(ui, |ui| {
+                for (n, ev) in events.iter().rev().enumerate() {
+                    if n > 0 {
+                        widgets::divider(ui, 14.0);
+                    }
+                    widgets::trailing_row_h(
+                        ui,
+                        24.0,
+                        egui::Align::Center,
+                        |ui| {
+                            ui.label(faint(crate::timeutil::format_datetime(ev.at)));
+                        },
+                        |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                let color = if ev.kind.is_sensitive() {
+                                    warn()
+                                } else {
+                                    text()
+                                };
+                                ui.label(RichText::new(ev.kind.label()).color(color));
+                                if !ev.detail.is_empty() {
+                                    ui.add(egui::Label::new(faint(&ev.detail)).truncate());
+                                }
+                            });
+                        },
+                    );
+                }
+            });
+    });
 }

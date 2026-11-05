@@ -33,6 +33,10 @@ pub enum ImportError {
     Unrecognised,
     #[error("this is an encrypted export; please export unencrypted JSON from the other application, import it, then delete it")]
     EncryptedExport,
+    #[error("this is a KeePass database; it needs its password to import")]
+    KdbxNeedsPassword,
+    #[error("{0}")]
+    Kdbx(#[from] crate::kdbx::KdbxError),
 }
 
 #[derive(Debug, Default)]
@@ -65,6 +69,9 @@ pub fn import_auto(path: &Path, bytes: &[u8]) -> Result<ImportResult, ImportErro
         .extension()
         .map(|e| e.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
+    if crate::kdbx::is_kdbx(bytes) {
+        return Err(ImportError::KdbxNeedsPassword);
+    }
     let first = bytes
         .iter()
         .copied()
@@ -87,6 +94,7 @@ struct Columns {
     totp: Option<usize>,
     kind: Option<usize>,
     extra: Option<usize>,
+    tags: Option<usize>,
 }
 
 fn classify_header(h: &str) -> Option<&'static str> {
@@ -106,6 +114,7 @@ fn classify_header(h: &str) -> Option<&'static str> {
         "totp" | "login_totp" | "otpauth" | "one-time password" | "otp" => "totp",
         "type" | "kind" => "kind",
         "extra_fields" => "extra",
+        "tags" | "tag" | "folder" | "grouping" | "group" => "tags",
         _ => return None,
     })
 }
@@ -131,6 +140,7 @@ pub fn import_csv(bytes: &[u8]) -> Result<ImportResult, ImportError> {
             Some("totp") => &mut cols.totp,
             Some("kind") => &mut cols.kind,
             Some("extra") => &mut cols.extra,
+            Some("tags") => &mut cols.tags,
             _ => continue,
         };
         slot.get_or_insert(i);
@@ -166,6 +176,7 @@ pub fn import_csv(bytes: &[u8]) -> Result<ImportResult, ImportError> {
             notes: c_raw(&rec, cols.notes),
             totp: get(cols.totp),
             extra: c_raw(&rec, cols.extra),
+            tags: get(cols.tags),
         };
         match item.into_entry() {
             Some(e) => result.entries.push(e),
@@ -190,6 +201,7 @@ struct FlatItem {
     notes: String,
     totp: String,
     extra: String,
+    tags: String,
 }
 
 impl Drop for FlatItem {
@@ -240,14 +252,17 @@ impl FlatItem {
             "Imported item".into()
         };
         e.notes = self.notes.clone();
+        for t in self.tags.split([';', ',']) {
+            e.add_tag(t);
+        }
         set_or_add(&mut e, FieldKind::Url, "Website", &self.url);
         set_or_add(&mut e, FieldKind::Username, "Username", &self.username);
         set_or_add(&mut e, FieldKind::Email, "Email", &self.email);
         set_or_add(&mut e, FieldKind::Password, "Password", &self.password);
         if !self.totp.is_empty() {
             e.fields.push(Field::with_value(
-                "One-time code secret",
-                FieldKind::Secret,
+                "One-time code",
+                FieldKind::Totp,
                 &self.totp,
             ));
         }
@@ -335,6 +350,7 @@ pub fn import_json(bytes: &[u8]) -> Result<ImportResult, ImportError> {
                 notes: String::new(),
                 totp: String::new(),
                 extra: String::new(),
+                tags: String::new(),
             };
             for (k, val) in obj {
                 let Some(s) = val.as_str() else { continue };
@@ -347,6 +363,7 @@ pub fn import_json(bytes: &[u8]) -> Result<ImportResult, ImportError> {
                     Some("notes") => &mut flat.notes,
                     Some("totp") => &mut flat.totp,
                     Some("kind") => &mut flat.kind,
+                    Some("tags") => &mut flat.tags,
                     _ => continue,
                 };
                 if slot.is_empty() {
@@ -410,11 +427,8 @@ fn bitwarden_item(item: &Value) -> Option<Entry> {
             );
             let totp = s(item, &["login", "totp"]);
             if !totp.is_empty() {
-                e.fields.push(Field::with_value(
-                    "One-time code secret",
-                    FieldKind::Secret,
-                    totp,
-                ));
+                e.fields
+                    .push(Field::with_value("One-time code", FieldKind::Totp, totp));
             }
             e
         }
@@ -524,9 +538,10 @@ fn bitwarden_item(item: &Value) -> Option<Entry> {
 /// Produce a **plaintext** CSV of the whole vault. The caller is responsible
 /// for warning the user and obtaining explicit confirmation.
 ///
-/// Columns: `kind,title,url,username,email,password,notes,extra_fields`, where
-/// `extra_fields` holds any other fields as `label=value` lines. The format
-/// re-imports into VaultRust.
+/// Columns: `kind,title,url,username,email,password,totp,tags,notes,extra_fields`,
+/// where `extra_fields` holds any other fields as `label=value` lines and
+/// `tags` is `;`-separated. The format re-imports into VaultRust. Password
+/// history and the trash are not exported.
 pub fn export_csv(data: &VaultData) -> Zeroizing<Vec<u8>> {
     // Reserve generously up front so the buffer never reallocates.
     let estimate: usize = data
@@ -553,6 +568,8 @@ pub fn export_csv(data: &VaultData) -> Zeroizing<Vec<u8>> {
             "username",
             "email",
             "password",
+            "totp",
+            "tags",
             "notes",
             "extra_fields",
         ]);
@@ -571,6 +588,8 @@ pub fn export_csv(data: &VaultData) -> Zeroizing<Vec<u8>> {
             let user = Zeroizing::new(take(FieldKind::Username));
             let email = Zeroizing::new(take(FieldKind::Email));
             let pass = Zeroizing::new(take(FieldKind::Password));
+            let totp = Zeroizing::new(take(FieldKind::Totp));
+            let tags = e.tags.join("; ");
             let mut extra = Zeroizing::new(String::new());
             for (i, f) in e.fields.iter().enumerate() {
                 if !used[i] && !f.value.is_empty() {
@@ -589,6 +608,8 @@ pub fn export_csv(data: &VaultData) -> Zeroizing<Vec<u8>> {
                 &user,
                 &email,
                 &pass,
+                &totp,
+                &tags,
                 &e.notes,
                 &extra,
             ]);
@@ -624,12 +645,45 @@ mod tests {
         let r = import_csv(csv.as_bytes()).unwrap();
         assert_eq!(r.entries.len(), 2);
         assert_eq!(r.entries[0].kind, EntryKind::Login);
-        assert!(r.entries[0]
-            .fields
-            .iter()
-            .any(|f| f.label == "One-time code secret"));
+        assert_eq!(r.entries[0].totp_secret(), Some("JBSWY3DPEHPK3PXP"));
         assert_eq!(r.entries[1].kind, EntryKind::SecureNote);
         assert_eq!(r.entries[1].notes, "a\nb");
+    }
+
+    #[test]
+    fn tags_and_totp_roundtrip_through_export() {
+        let mut v = VaultData::new("t");
+        let mut e = Entry::new(EntryKind::Login);
+        e.title = "Mail".into();
+        e.add_tag("Work");
+        e.add_tag("Email");
+        e.fields.push(Field::with_value(
+            "2FA",
+            FieldKind::Totp,
+            "JBSWY3DPEHPK3PXP",
+        ));
+        v.entries.push(e);
+        let r = import_csv(&export_csv(&v)).unwrap();
+        assert_eq!(r.entries[0].tags, ["Work", "Email"]);
+        assert_eq!(r.entries[0].totp_secret(), Some("JBSWY3DPEHPK3PXP"));
+    }
+
+    #[test]
+    fn folder_column_becomes_a_tag() {
+        let csv = "folder,name,login_username,login_password
+Banking,Bank,me,pw
+";
+        let r = import_csv(csv.as_bytes()).unwrap();
+        assert_eq!(r.entries[0].tags, ["Banking"]);
+    }
+
+    #[test]
+    fn kdbx_is_detected_by_content() {
+        let bytes = [0x03, 0xd9, 0xa2, 0x9a, 0x67, 0xfb, 0x4b, 0xb5, 1, 0, 4, 0];
+        assert!(matches!(
+            import_auto(Path::new("x.csv"), &bytes),
+            Err(ImportError::KdbxNeedsPassword)
+        ));
     }
 
     #[test]

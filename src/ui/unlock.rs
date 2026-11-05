@@ -7,7 +7,7 @@ use eframe::egui::{self, Frame, Key};
 use secrecy::SecretString;
 use zeroize::{Zeroize, Zeroizing};
 
-use super::create::secret_buffer;
+use super::create::{key_file_picker, secret_buffer, KeyFileChoice};
 use super::icons;
 use super::jobs::{Job, Poll};
 use super::theme::*;
@@ -17,7 +17,7 @@ use super::{Services, Transition};
 use crate::error::VaultError;
 use crate::format::VaultFile;
 use crate::storage;
-use crate::vault::UnlockedVault;
+use crate::vault::{Credentials, UnlockedVault};
 
 /// Failed attempts allowed before a growing delay kicks in.
 const FREE_ATTEMPTS: u32 = 3;
@@ -30,10 +30,17 @@ pub struct UnlockState {
     error: Option<String>,
     /// Public header information, or why the file cannot be used.
     info: Result<String, String>,
+    needs_key_file: bool,
+    key_file: KeyFileChoice,
     failures: u32,
     retry_at: Option<Instant>,
     focus_pending: bool,
     job: Option<Job<Result<UnlockedVault, VaultError>>>,
+    /// The vault id from the header (for Windows Hello).
+    vault_id: Option<[u8; crate::format::VAULT_ID_LEN]>,
+    /// Windows Hello can unlock this vault right now.
+    hello: bool,
+    hello_job: Option<Job<Result<UnlockedVault, String>>>,
 }
 
 /// Delay before the next attempt after `failures` wrong passwords. This
@@ -50,9 +57,19 @@ pub fn retry_delay(failures: u32) -> Option<Duration> {
 
 impl UnlockState {
     pub fn new(path: PathBuf) -> Self {
+        let mut needs_key_file = false;
+        let mut vault_id = None;
         let info = match storage::read_vault_bytes(&path) {
             Ok(bytes) => match VaultFile::from_bytes(&bytes) {
-                Ok(f) => Ok(f.header.kdf.describe()),
+                Ok(f) => {
+                    needs_key_file = f.header.key_file;
+                    vault_id = Some(f.header.vault_id);
+                    let mut d = f.header.kdf.describe();
+                    if needs_key_file {
+                        d.push_str(" · key file");
+                    }
+                    Ok(d)
+                }
                 Err(e) => Err(e.to_string()),
             },
             Err(e) => Err(e.to_string()),
@@ -63,11 +80,38 @@ impl UnlockState {
             reveal: false,
             error: None,
             info,
+            needs_key_file,
+            key_file: KeyFileChoice::default(),
             failures: 0,
             retry_at: None,
             focus_pending: true,
             job: None,
+            vault_id,
+            hello: false,
+            hello_job: None,
         }
+    }
+
+    /// Offer Windows Hello if `allowed` (the master password was already
+    /// used for this vault since the app started) and Hello is turned on for
+    /// this vault and available.
+    pub fn allow_hello(mut self, allowed: bool) -> Self {
+        self.hello = allowed
+            && self
+                .vault_id
+                .is_some_and(|id| crate::hello::is_enabled(&id))
+            && crate::hello::is_available();
+        self
+    }
+
+    fn start_hello(&mut self, ctx: &egui::Context) {
+        let Some(id) = self.vault_id else { return };
+        let path = self.path.clone();
+        self.error = None;
+        self.hello_job = Some(Job::spawn(ctx, move || {
+            let secret = crate::hello::unlock(&id).map_err(|e| e.to_string())?;
+            UnlockedVault::open_with_hello(&path, secret).map_err(|e| e.to_string())
+        }));
     }
 
     #[cfg(test)]
@@ -75,26 +119,70 @@ impl UnlockState {
         self.job.is_some()
     }
 
+    /// Put the cursor back in the password field (after the global hotkey
+    /// brought the window forward).
+    pub fn focus(&mut self) {
+        self.focus_pending = true;
+    }
+
     fn start(&mut self, ctx: &egui::Context) {
         if self.password.is_empty() {
             self.focus_pending = true;
             return;
         }
-        let pw = SecretString::from(self.password.as_str().to_owned());
+        let key_file = match self.key_file.load() {
+            Ok(k) => k,
+            Err(e) => {
+                self.error = Some(e);
+                return;
+            }
+        };
+        if self.needs_key_file && key_file.is_none() {
+            self.error = Some("Choose this vault's key file.".into());
+            return;
+        }
+        let creds = Credentials::with_key_file(
+            SecretString::from(self.password.as_str().to_owned()),
+            key_file,
+        );
         self.password.zeroize();
         let path = self.path.clone();
         self.error = None;
-        self.job = Some(Job::spawn(ctx, move || UnlockedVault::open(&path, &pw)));
+        self.job = Some(Job::spawn(ctx, move || {
+            UnlockedVault::open_with(&path, &creds)
+        }));
     }
 }
 
 pub fn show(ctx: &egui::Context, s: &mut UnlockState, _svc: &mut Services) -> Option<Transition> {
     let mut t = None;
+    if let Some(job) = &s.hello_job {
+        match job.poll() {
+            Poll::Pending => {}
+            Poll::Done(Ok(mut v)) => {
+                s.hello_job = None;
+                v.data_mut()
+                    .log(crate::model::AuditKind::UnlockedWithHello, "");
+                return Some(Transition::Open(Box::new(v)));
+            }
+            Poll::Done(Err(e)) => {
+                s.hello_job = None;
+                s.focus_pending = true;
+                s.error = Some(e);
+            }
+            Poll::Failed => {
+                s.hello_job = None;
+                s.error = Some("Windows Hello failed unexpectedly.".into());
+            }
+        }
+    }
     if let Some(job) = &s.job {
         match job.poll() {
             Poll::Pending => {}
-            Poll::Done(Ok(v)) => {
+            Poll::Done(Ok(mut v)) => {
                 s.job = None;
+                // Saved with the next change or when the vault locks.
+                v.data_mut().log(crate::model::AuditKind::Unlocked, "");
                 return Some(Transition::Open(Box::new(v)));
             }
             Poll::Done(Err(e)) => {
@@ -104,7 +192,11 @@ pub fn show(ctx: &egui::Context, s: &mut UnlockState, _svc: &mut Services) -> Op
                     VaultError::WrongPasswordOrTampered => {
                         s.failures += 1;
                         s.retry_at = retry_delay(s.failures).map(|d| Instant::now() + d);
-                        "Wrong master password.".into()
+                        if s.needs_key_file {
+                            "Wrong master password or key file.".into()
+                        } else {
+                            "Wrong master password.".into()
+                        }
                     }
                     other => other.to_string(),
                 });
@@ -115,7 +207,7 @@ pub fn show(ctx: &egui::Context, s: &mut UnlockState, _svc: &mut Services) -> Op
             }
         }
     }
-    let busy = s.job.is_some();
+    let busy = s.job.is_some() || s.hello_job.is_some();
     let wait = s
         .retry_at
         .map(|at| at.saturating_duration_since(Instant::now()))
@@ -131,7 +223,7 @@ pub fn show(ctx: &egui::Context, s: &mut UnlockState, _svc: &mut Services) -> Op
         .unwrap_or_else(|| "Vault".into());
 
     egui::CentralPanel::default()
-        .frame(Frame::new().fill(BG).inner_margin(24.0))
+        .frame(Frame::new().fill(bg()).inner_margin(24.0))
         .show(ctx, |ui| {
             widgets::offline_footer(ui);
             egui::ScrollArea::vertical()
@@ -143,19 +235,28 @@ pub fn show(ctx: &egui::Context, s: &mut UnlockState, _svc: &mut Services) -> Op
                             widgets::logo(ui, 52.0);
                             ui.add_space(12.0);
                             ui.add(egui::Label::new(strong(&name, 22.0)).truncate());
+                            let details = match &s.info {
+                                Ok(kdf) => format!(
+                                    "{}
+{kdf}",
+                                    s.path.display()
+                                ),
+                                Err(_) => s.path.display().to_string(),
+                            };
                             ui.add(
-                                egui::Label::new(faint(s.path.display().to_string())).truncate(),
+                                egui::Label::new(faint(widgets::short_path(&s.path))).truncate(),
                             )
-                            .on_hover_text(s.path.display().to_string());
+                            .on_hover_text(details);
                         });
                         ui.add_space(22.0);
 
                         let info = s.info.clone();
+
                         match &info {
                             Err(e) => {
                                 widgets::danger_box(ui, &format!("This file can't be opened: {e}"))
                             }
-                            Ok(info) => {
+                            Ok(_) => {
                                 let resp = ui
                                     .add_enabled_ui(!busy, |ui| {
                                         widgets::password_input(
@@ -170,6 +271,11 @@ pub fn show(ctx: &egui::Context, s: &mut UnlockState, _svc: &mut Services) -> Op
                                     resp.request_focus();
                                     s.focus_pending = false;
                                 }
+                                if s.needs_key_file {
+                                    ui.add_enabled_ui(!busy, |ui| {
+                                        key_file_picker(ui, &mut s.key_file, false);
+                                    });
+                                }
                                 let enter =
                                     resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
                                 if let Some(e) = &s.error {
@@ -182,7 +288,11 @@ pub fn show(ctx: &egui::Context, s: &mut UnlockState, _svc: &mut Services) -> Op
                                 if busy {
                                     ui.horizontal(|ui| {
                                         ui.add(egui::Spinner::new());
-                                        ui.label(dim("Unlocking…"));
+                                        ui.label(dim(if s.hello_job.is_some() {
+                                            "Waiting for Windows Hello…"
+                                        } else {
+                                            "Unlocking…"
+                                        }));
                                     });
                                 } else if let Some(w) = wait {
                                     widgets::primary_button_wide(
@@ -200,31 +310,37 @@ pub fn show(ctx: &egui::Context, s: &mut UnlockState, _svc: &mut Services) -> Op
                                 {
                                     s.start(ctx);
                                 }
-                                ui.add_space(2.0);
-                                ui.vertical_centered(|ui| ui.label(faint(info.as_str())));
+                                if s.hello && !busy {
+                                    ui.add_space(2.0);
+                                    if widgets::secondary_button_wide(
+                                        ui,
+                                        &icons::with(
+                                            icons::FINGERPRINT,
+                                            "Unlock with Windows Hello",
+                                        ),
+                                    )
+                                    .clicked()
+                                    {
+                                        s.start_hello(ctx);
+                                    }
+                                }
                             }
                         }
-                        ui.add_space(18.0);
+                        ui.add_space(22.0);
                         ui.add_enabled_ui(!busy, |ui| {
-                            // Three links centred as one row.
-                            let row_w = 290.0;
-                            ui.horizontal(|ui| {
-                                ui.add_space(((ui.available_width() - row_w) / 2.0).max(0.0));
-                                ui.spacing_mut().item_spacing.x = 4.0;
-                                if widgets::link_button(ui, "Open another…").clicked() {
+                            match widgets::centered_links(
+                                ui,
+                                &["Open another vault…", "Create a vault", "Start screen"],
+                            ) {
+                                Some(0) => {
                                     if let Some(p) = pick_vault_file() {
                                         t = Some(Transition::Unlock(p));
                                     }
                                 }
-                                ui.label(faint("·"));
-                                if widgets::link_button(ui, "Create new").clicked() {
-                                    t = Some(Transition::Create);
-                                }
-                                ui.label(faint("·"));
-                                if widgets::link_button(ui, "Start screen").clicked() {
-                                    t = Some(Transition::Welcome);
-                                }
-                            });
+                                Some(1) => t = Some(Transition::Create),
+                                Some(_) => t = Some(Transition::Welcome),
+                                None => {}
+                            }
                         });
                     });
                 });

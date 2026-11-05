@@ -142,8 +142,14 @@ fn vault_file_contains_no_recognisable_plaintext() {
         .unwrap();
     drop(v);
 
-    for file in ["a.vault", "b.vault"] {
-        let bytes = fs::read(vault_path(&dir, file)).unwrap();
+    // Automatic backups are scanned too.
+    let mut files: Vec<PathBuf> = vec![vault_path(&dir, "a.vault"), vault_path(&dir, "b.vault")];
+    let auto = storage::list_auto_backups(&vault_path(&dir, "a.vault"));
+    assert!(!auto.is_empty(), "automatic backups are on by default");
+    files.extend(auto);
+    for path in &files {
+        let file = path.display();
+        let bytes = fs::read(path).unwrap();
         for m in MARKERS.iter().chain([
             &PW,
             &"another long master password",
@@ -158,12 +164,23 @@ fn vault_file_contains_no_recognisable_plaintext() {
             assert!(!contains(&bytes, m.as_bytes()), "{file}: found {m:?}");
         }
     }
-    // Only the two vault files exist: no plaintext or temporary side files.
+    // Only the two vault files and the automatic-backup folder exist: no
+    // plaintext or temporary side files.
     let names: HashSet<String> = fs::read_dir(dir.path())
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(names, HashSet::from(["a.vault".into(), "b.vault".into()]));
+    assert_eq!(
+        names,
+        HashSet::from(["a.vault".into(), "b.vault".into(), "a.vault.backups".into()])
+    );
+    for e in fs::read_dir(vault_path(&dir, "a.vault.backups")).unwrap() {
+        let n = e.unwrap().file_name().to_string_lossy().into_owned();
+        assert!(
+            n.starts_with("a-auto-") && n.ends_with(".vault"),
+            "unexpected file {n}"
+        );
+    }
 }
 
 #[test]

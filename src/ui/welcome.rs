@@ -22,7 +22,7 @@ pub fn pick_vault_file() -> Option<PathBuf> {
 pub fn show(ctx: &egui::Context, _s: &mut WelcomeState, svc: &mut Services) -> Option<Transition> {
     let mut t = None;
     egui::CentralPanel::default()
-        .frame(Frame::new().fill(BG).inner_margin(24.0))
+        .frame(Frame::new().fill(bg()).inner_margin(24.0))
         .show(ctx, |ui| {
             widgets::offline_footer(ui);
             egui::ScrollArea::vertical()
@@ -108,22 +108,19 @@ fn recent_row(ui: &mut egui::Ui, path: &Path) -> RowAction {
     let row_hot = resp.hovered() || remove.hovered();
     let p = ui.painter_at(rect);
     if row_hot {
-        p.rect_filled(rect, 6.0, SURFACE);
+        p.rect_filled(rect, 6.0, surface());
     }
     let name = path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let dir = path
-        .parent()
-        .map(|d| d.display().to_string())
-        .unwrap_or_default();
+    let dir = path.parent().map(widgets::short_path).unwrap_or_default();
     p.text(
         rect.left_center() + Vec2::new(10.0, 0.0),
         Align2::LEFT_CENTER,
         icons::VAULT,
         FontId::proportional(18.0),
-        if exists { TEXT_DIM } else { TEXT_FAINT },
+        if exists { text_dim() } else { text_faint() },
     );
     let text = ui.painter_at(rect.with_max_x(remove_rect.min.x - 6.0));
     text.text(
@@ -131,7 +128,11 @@ fn recent_row(ui: &mut egui::Ui, path: &Path) -> RowAction {
         Align2::LEFT_CENTER,
         name,
         FontId::proportional(14.0),
-        if exists { TEXT } else { TEXT_FAINT },
+        if exists {
+            super::theme::text()
+        } else {
+            text_faint()
+        },
     );
     text.text(
         rect.left_center() + Vec2::new(38.0, 9.0),
@@ -142,7 +143,7 @@ fn recent_row(ui: &mut egui::Ui, path: &Path) -> RowAction {
             format!("Missing — {dir}")
         },
         FontId::proportional(11.5),
-        TEXT_FAINT,
+        text_faint(),
     );
     if row_hot {
         p.text(
@@ -150,7 +151,11 @@ fn recent_row(ui: &mut egui::Ui, path: &Path) -> RowAction {
             Align2::CENTER_CENTER,
             icons::X,
             FontId::proportional(13.0),
-            if remove.hovered() { TEXT } else { TEXT_FAINT },
+            if remove.hovered() {
+                super::theme::text()
+            } else {
+                text_faint()
+            },
         );
     }
     let remove = remove
