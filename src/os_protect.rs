@@ -931,3 +931,52 @@ pub fn http_get(url: &str, max_bytes: usize) -> Result<Vec<u8>, HttpError> {
 pub fn http_get(_url: &str, _max_bytes: usize) -> Result<Vec<u8>, HttpError> {
     Err(HttpError::Unsupported)
 }
+
+/// The installer's entry in Settings → Apps (Inno Setup names it after the
+/// AppId in installer/vaultrust.iss).
+#[cfg(windows)]
+const INSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{8F3C2A51-6D2B-4E7A-9C1E-5B0D7A4F2E10}_is1";
+
+/// After a self-update, show the new version in Settings → Apps. Does
+/// nothing when VaultRust wasn't installed with the installer.
+#[cfg(windows)]
+pub fn record_installed_version(version: &str) {
+    use windows_sys::Win32::System::Registry::{
+        RegGetValueW, RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_SZ,
+    };
+    let key = run_key::wide(INSTALL_KEY);
+    let name = run_key::wide("DisplayName");
+    let mut size = 0u32;
+    // SAFETY: NUL-terminated names; a null buffer only asks for the size,
+    // which tells whether the installer's key exists.
+    let exists = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            name.as_ptr(),
+            RRF_RT_REG_SZ,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut size,
+        )
+    } == 0;
+    if !exists {
+        return;
+    }
+    let value = run_key::wide("DisplayVersion");
+    let data = run_key::wide(version);
+    // SAFETY: `data` is NUL-terminated UTF-16 of the stated byte length.
+    unsafe {
+        RegSetKeyValueW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            value.as_ptr(),
+            REG_SZ,
+            data.as_ptr().cast(),
+            (data.len() * 2) as u32,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+pub fn record_installed_version(_version: &str) {}

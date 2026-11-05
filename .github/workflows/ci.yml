@@ -32,10 +32,20 @@ jobs:
       - name: Release build
         shell: pwsh
         run: powershell -ExecutionPolicy Bypass -File scripts/build.ps1 -KeepCache
+      - name: Installer
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress | Out-Null
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item dist/VaultRust.exe release/VaultRust.exe
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Qp /DAppVersion=0.0.0 installer\vaultrust.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
       - uses: actions/upload-artifact@v4
         with:
           name: VaultRust-${{ github.sha }}
-          path: dist/VaultRust.exe
+          path: |
+            dist/VaultRust.exe
+            release/VaultRust-Setup-0.0.0.exe
           if-no-files-found: error
 
   headless:

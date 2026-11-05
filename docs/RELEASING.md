@@ -31,9 +31,23 @@ powershell -ExecutionPolicy Bypass -File scripts\release.ps1 0.2.0
 ```
 
 This sets the version in `Cargo.toml`, commits, tags `v0.2.0` and pushes. The
-**Release** workflow then tests, builds, signs and publishes `VaultRust.exe`
-and `VaultRust.exe.sig`. Edit the release on GitHub to write the notes users
+**Release** workflow then tests, builds and signs the program, builds the
+installer with Inno Setup (`installer/vaultrust.iss`) and publishes:
+
+* `VaultRust-Setup-0.2.0.exe` — what people download and run;
+* `VaultRust.exe` and `VaultRust.exe.sig` — what installed copies update
+  themselves from;
+* `SHA256SUMS.txt`. Edit the release on GitHub to write the notes users
 see under "What's new".
+
+## Windows SmartScreen
+
+The installer and program are not Authenticode-signed (that needs a paid
+code-signing certificate or a service such as Azure Trusted Signing or
+SignPath). Until they are, Windows shows "Windows protected your PC" the
+first time: **More info → Run anyway**. Browsers may also warn that the file
+"isn't commonly downloaded". This does not affect VaultRust's own update
+signature, which is checked independently.
 
 The workflow refuses to publish if the tag doesn't match `Cargo.toml` or the
 signing secret is missing. The app only installs versions newer than itself.

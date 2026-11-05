@@ -2,6 +2,13 @@
 
 A local password safe for Windows, written entirely in Rust.
 
+**Download:** get `VaultRust-Setup-x.y.z.exe` from the
+[latest release](https://github.com/MStefa003/vault/releases/latest) and run
+it. It installs for your Windows account only (no administrator rights), adds
+VaultRust to the Start menu, and can be removed from Settings → Apps. Windows
+may show "Windows protected your PC" because the installer isn't
+code-signed yet: choose **More info → Run anyway**.
+
 * **One encrypted file.** Your vault is a single `.vault` file stored wherever
   you choose. No database, no cloud, no account, no telemetry. Your vault never
   leaves your computer; the only network use is an optional daily check for

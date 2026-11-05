@@ -55,7 +55,9 @@ impl Updates {
         self.install = Some(Job::spawn(ctx, move || {
             let exe = std::env::current_exe().map_err(|e| UpdateError::Install(e.to_string()))?;
             let bytes = update::download(&release)?;
-            update::install(&exe, &bytes)
+            update::install(&exe, &bytes)?;
+            crate::os_protect::record_installed_version(&release.version.to_string());
+            Ok(())
         }));
     }
 

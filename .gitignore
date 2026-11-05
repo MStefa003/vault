@@ -3,6 +3,7 @@
 *.vrtmp
 *.csv
 /dist
+/release
 /fuzz/target
 /fuzz/corpus
 /fuzz/artifacts

@@ -107,6 +107,10 @@ windows = { version = "0.62", features = [
     "Foundation",
 ] }
 
+[build-dependencies]
+# Embeds the program icon and version information (build.rs).
+winresource = { version = "0.1", default-features = false }
+
 [dev-dependencies]
 tempfile = "3"
 # Draws QR codes for the scanner tests.
