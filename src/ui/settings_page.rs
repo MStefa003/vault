@@ -746,7 +746,7 @@ fn import_export_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Servic
                                 .color(danger()),
                         )
                         .fill(surface_2())
-                        .stroke(egui::Stroke::new(1.0, border()))
+                        .stroke(egui::Stroke::new(1.0_f32, border()))
                         .corner_radius(6.0)
                         .min_size(egui::vec2(0.0, 32.0)),
                     )

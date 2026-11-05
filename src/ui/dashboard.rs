@@ -176,7 +176,7 @@ fn top_bar(ui: &mut egui::Ui, query: &mut String, count: usize, acts: &mut Vec<A
     let (stroke_w, color) = if focused {
         (2.0, accent())
     } else {
-        (1.0, border())
+        (1.0_f32, border())
     };
     ui.painter().hline(
         row.x_range(),
@@ -207,7 +207,7 @@ fn small_link(ui: &mut egui::Ui, text: &str) -> egui::Response {
         ui.painter().hline(
             resp.rect.x_range(),
             resp.rect.bottom(),
-            Stroke::new(1.0, text_dim()),
+            Stroke::new(1.0_f32, text_dim()),
         );
     }
     resp
@@ -474,7 +474,7 @@ fn health(ui: &mut egui::Ui, ms: &MainState, now: i64, acts: &mut Vec<Act>) {
 
         let (r, _) = ui.allocate_exact_size(Vec2::new(1.0, 16.0), Sense::hover());
         ui.painter()
-            .vline(r.center().x, r.y_range(), Stroke::new(1.0, divider()));
+            .vline(r.center().x, r.y_range(), Stroke::new(1.0_f32, divider()));
 
         if problems.is_empty() && h.weak.is_empty() {
             ui.label(
@@ -563,7 +563,7 @@ fn clickable(ui: &egui::Ui, resp: egui::Response, tip: Option<&str>) -> bool {
         ui.painter().hline(
             resp.rect.x_range(),
             resp.rect.bottom() + 1.0,
-            Stroke::new(1.0, text_faint()),
+            Stroke::new(1.0_f32, text_faint()),
         );
     }
     resp.clicked()
@@ -609,7 +609,7 @@ fn table_header(ui: &mut egui::Ui, title: &str, last: &str) {
     ui.add_space(4.0);
     let y = ui.cursor().top();
     ui.painter()
-        .hline(rect.x_range(), y, Stroke::new(1.0, border()));
+        .hline(rect.x_range(), y, Stroke::new(1.0_f32, border()));
 }
 
 fn table_row(ui: &mut egui::Ui, e: &Entry, last: &str, now: i64, acts: &mut Vec<Act>) {
@@ -624,7 +624,7 @@ fn table_row(ui: &mut egui::Ui, e: &Entry, last: &str, now: i64, acts: &mut Vec<
     p.hline(
         rect.x_range(),
         rect.bottom() - 0.5,
-        Stroke::new(1.0, divider()),
+        Stroke::new(1.0_f32, divider()),
     );
     let cy = rect.center().y;
 

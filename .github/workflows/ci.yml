@@ -64,10 +64,16 @@ jobs:
         with:
           tool: cargo-fuzz
       - name: Run every target
+        shell: bash
         run: |
-          for t in $(cargo fuzz list); do
+          set -o pipefail
+          # On failure, repeat the end of the output as an annotation, which
+          # is visible on the run page without opening the log.
+          report() { echo "::error title=$1::$(tail -n 40 "$2" | tr -d '\r' | awk '{ gsub(/%/, "%25"); printf "%s%%0A", $0 }')"; exit 1; }
+          cargo fuzz list > targets.txt 2> list.log || report "cargo fuzz list failed" list.log
+          for t in $(cat targets.txt); do
             echo "::group::$t"
-            cargo fuzz run "$t" -- -max_total_time=60 -rss_limit_mb=1024
+            cargo fuzz run "$t" -- -max_total_time=60 -rss_limit_mb=1024 2>&1 | tee "fuzz-$t.log" || report "fuzz target $t failed" "fuzz-$t.log"
             echo "::endgroup::"
           done
       - name: Keep crashing inputs

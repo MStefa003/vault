@@ -133,7 +133,7 @@ impl Updates {
             .frame(
                 Frame::new()
                     .fill(surface_2())
-                    .stroke(egui::Stroke::new(1.0, border()))
+                    .stroke(egui::Stroke::new(1.0_f32, border()))
                     .inner_margin(Margin::symmetric(16, 8)),
             )
             .show_separator_line(false)

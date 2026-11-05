@@ -93,7 +93,7 @@ fn wide_button(ui: &mut Ui, text: &str, primary: bool, enabled: bool) -> Respons
     } else {
         (
             surface_2(),
-            Stroke::new(1.0, border()),
+            Stroke::new(1.0_f32, border()),
             super::theme::text(),
         )
     };
@@ -129,7 +129,7 @@ pub fn secondary_button(ui: &mut Ui, text: &str) -> Response {
     ui.add(
         Button::new(text)
             .fill(surface_2())
-            .stroke(Stroke::new(1.0, border()))
+            .stroke(Stroke::new(1.0_f32, border()))
             .corner_radius(6.0)
             .min_size(Vec2::new(0.0, BUTTON_H)),
     )
@@ -416,7 +416,7 @@ pub fn slider(ui: &mut Ui, slider: egui::Slider<'_>) -> Response {
             (&mut w.hovered, Color32::WHITE),
             (&mut w.active, Color32::WHITE),
         ] {
-            v.fg_stroke = Stroke::new(10.0, color);
+            v.fg_stroke = Stroke::new(10.0_f32, color);
             v.corner_radius = egui::CornerRadius::same(10);
             v.expansion = 0.0;
         }
@@ -456,7 +456,7 @@ pub fn divider(ui: &mut Ui, bleed: f32) {
     ui.painter().hline(
         (rect.left() - bleed)..=(rect.right() + bleed),
         rect.center().y,
-        Stroke::new(1.0, super::theme::divider()),
+        Stroke::new(1.0_f32, super::theme::divider()),
     );
 }
 
@@ -506,7 +506,7 @@ pub fn pill(ui: &mut Ui, text: &str, fg: Color32) -> Response {
 /// Quiet outlined label for a tag.
 pub fn tag_chip(ui: &mut Ui, text: &str) -> Response {
     Frame::new()
-        .stroke(Stroke::new(1.0, border()))
+        .stroke(Stroke::new(1.0_f32, border()))
         .corner_radius(RADIUS_SM)
         .inner_margin(egui::Margin::symmetric(7, 1))
         .show(ui, |ui| {
@@ -558,7 +558,7 @@ pub fn countdown(ui: &mut Ui, remaining: u64, period: u64) {
     let r = 6.5;
     let frac = remaining as f32 / period.max(1) as f32;
     let color = if remaining <= 5 { warn() } else { text_faint() };
-    p.circle_stroke(c, r, Stroke::new(2.0, rail()));
+    p.circle_stroke(c, r, Stroke::new(2.0_f32, rail()));
     let steps = 32;
     let start = -std::f32::consts::FRAC_PI_2;
     let points: Vec<egui::Pos2> = (0..=steps)
@@ -567,7 +567,7 @@ pub fn countdown(ui: &mut Ui, remaining: u64, period: u64) {
             egui::pos2(c.x + r * a.cos(), c.y + r * a.sin())
         })
         .collect();
-    p.add(egui::Shape::line(points, Stroke::new(2.0, color)));
+    p.add(egui::Shape::line(points, Stroke::new(2.0_f32, color)));
     ui.label(
         RichText::new(format!("{remaining}s"))
             .size(11.5)
@@ -761,7 +761,7 @@ fn notice(ui: &mut Ui, icon: &str, text: &str, color: Color32) {
             18,
         ))
         .stroke(Stroke::new(
-            1.0,
+            1.0_f32,
             Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 60),
         ))
         .corner_radius(6.0)

@@ -238,7 +238,7 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
     v.text_edit_bg_color = Some(p.input);
     v.faint_bg_color = p.surface_2;
     v.code_bg_color = p.input;
-    v.window_stroke = Stroke::new(1.0, p.border);
+    v.window_stroke = Stroke::new(1.0_f32, p.border);
     v.window_corner_radius = CornerRadius::same(10);
     v.menu_corner_radius = CornerRadius::same(8);
     v.window_shadow = Shadow {
@@ -256,8 +256,8 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
     v.hyperlink_color = p.accent;
     v.selection.bg_fill =
         Color32::from_rgba_unmultiplied(p.accent.r(), p.accent.g(), p.accent.b(), 0x48);
-    v.selection.stroke = Stroke::new(1.0, p.accent);
-    v.text_cursor.stroke = Stroke::new(2.0, p.accent);
+    v.selection.stroke = Stroke::new(1.0_f32, p.accent);
+    v.text_cursor.stroke = Stroke::new(2.0_f32, p.accent);
     v.warn_fg_color = p.warn;
     v.error_fg_color = p.danger;
     v.slider_trailing_fill = true;
@@ -268,33 +268,33 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
     let w = &mut v.widgets;
     w.noninteractive.bg_fill = p.surface;
     w.noninteractive.weak_bg_fill = p.surface;
-    w.noninteractive.bg_stroke = Stroke::new(1.0, p.border);
-    w.noninteractive.fg_stroke = Stroke::new(1.0, p.text_dim);
+    w.noninteractive.bg_stroke = Stroke::new(1.0_f32, p.border);
+    w.noninteractive.fg_stroke = Stroke::new(1.0_f32, p.text_dim);
     w.noninteractive.corner_radius = r;
 
     w.inactive.bg_fill = p.surface_2;
     w.inactive.weak_bg_fill = p.surface_2;
-    w.inactive.bg_stroke = Stroke::new(1.0, p.border);
-    w.inactive.fg_stroke = Stroke::new(1.0, p.text);
+    w.inactive.bg_stroke = Stroke::new(1.0_f32, p.border);
+    w.inactive.fg_stroke = Stroke::new(1.0_f32, p.text);
     w.inactive.corner_radius = r;
 
     w.hovered.bg_fill = p.hover;
     w.hovered.weak_bg_fill = p.hover;
-    w.hovered.bg_stroke = Stroke::new(1.0, p.hover_stroke);
-    w.hovered.fg_stroke = Stroke::new(1.0, p.text);
+    w.hovered.bg_stroke = Stroke::new(1.0_f32, p.hover_stroke);
+    w.hovered.fg_stroke = Stroke::new(1.0_f32, p.text);
     w.hovered.corner_radius = r;
     w.hovered.expansion = 0.0;
 
     w.active.bg_fill = p.accent_fill;
     w.active.weak_bg_fill = p.pressed;
-    w.active.bg_stroke = Stroke::new(1.0, p.accent);
-    w.active.fg_stroke = Stroke::new(1.0, p.text);
+    w.active.bg_stroke = Stroke::new(1.0_f32, p.accent);
+    w.active.fg_stroke = Stroke::new(1.0_f32, p.text);
     w.active.corner_radius = r;
     w.active.expansion = 0.0;
 
     w.open.bg_fill = p.surface_2;
     w.open.weak_bg_fill = p.surface_2;
-    w.open.bg_stroke = Stroke::new(1.0, p.border);
+    w.open.bg_stroke = Stroke::new(1.0_f32, p.border);
     w.open.corner_radius = r;
 
     let theme = if dark {

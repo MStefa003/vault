@@ -59,7 +59,7 @@ impl GenState {
 fn segmented(ui: &mut egui::Ui, mode: &mut Mode) {
     Frame::new()
         .fill(surface())
-        .stroke(Stroke::new(1.0, border()))
+        .stroke(Stroke::new(1.0_f32, border()))
         .corner_radius(7.0)
         .inner_margin(3.0)
         .show(ui, |ui| {
@@ -129,7 +129,7 @@ fn chip(ui: &mut egui::Ui, on: &mut bool, label: &str) -> egui::Response {
                     .family(egui::FontFamily::Monospace),
             )
             .fill(fill)
-            .stroke(Stroke::new(1.0, stroke))
+            .stroke(Stroke::new(1.0_f32, stroke))
             .corner_radius(14.0)
             .min_size(egui::vec2(48.0, 28.0)),
         )
@@ -162,7 +162,7 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
 
             Frame::new()
                 .fill(input())
-                .stroke(Stroke::new(1.0, border()))
+                .stroke(Stroke::new(1.0_f32, border()))
                 .corner_radius(RADIUS)
                 .inner_margin(egui::Margin::symmetric(16, 14))
                 .show(ui, |ui| {

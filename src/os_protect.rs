@@ -170,6 +170,7 @@ pub const AUTO_TYPE_HOTKEY: &str = "Ctrl+Shift+L";
 #[derive(Clone, Debug)]
 pub struct ForeignWindow {
     /// The HWND, stored as an integer so the value can cross threads.
+    #[cfg_attr(not(windows), allow(dead_code))]
     handle: isize,
     pub title: String,
 }
@@ -758,7 +759,9 @@ pub fn capture_screen_gray() -> Option<(Vec<u8>, usize, usize)> {
         }
         // BGRA -> luma.
         let gray = pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|p| ((p[2] as u32 * 299 + p[1] as u32 * 587 + p[0] as u32 * 114) / 1000) as u8)
             .collect();
         pixels.zeroize();

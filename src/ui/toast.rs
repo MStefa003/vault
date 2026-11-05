@@ -127,7 +127,7 @@ impl Toasts {
                     };
                     Frame::new()
                         .fill(surface_2())
-                        .stroke(Stroke::new(1.0, border()))
+                        .stroke(Stroke::new(1.0_f32, border()))
                         .corner_radius(8.0)
                         .inner_margin(egui::Margin::symmetric(12, 9))
                         .shadow(egui::Shadow {

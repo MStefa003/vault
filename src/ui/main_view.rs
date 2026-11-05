@@ -559,19 +559,16 @@ impl MainState {
                 }
             }
         }
-        match svc.toasts.take_clicked() {
-            Some(super::toast::ToastAction::RestoreEntry(id)) => {
-                if self.vault.data_mut().restore_entry(id) && self.commit(svc.toasts) {
-                    svc.toasts.info("Restored");
-                    // Restoring may give the item a new id if the old one is
-                    // taken; the restored item is the last one added.
-                    if let Some(e) = self.vault.data().entries.last() {
-                        let id = e.id;
-                        self.items.select(id);
-                    }
+        if let Some(super::toast::ToastAction::RestoreEntry(id)) = svc.toasts.take_clicked() {
+            if self.vault.data_mut().restore_entry(id) && self.commit(svc.toasts) {
+                svc.toasts.info("Restored");
+                // Restoring may give the item a new id if the old one is
+                // taken; the restored item is the last one added.
+                if let Some(e) = self.vault.data().entries.last() {
+                    let id = e.id;
+                    self.items.select(id);
                 }
             }
-            None => {}
         }
     }
 
