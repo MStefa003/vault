@@ -73,7 +73,7 @@ jobs:
           cargo fuzz list > targets.txt 2> list.log || report "cargo fuzz list failed" list.log
           for t in $(cat targets.txt); do
             echo "::group::$t"
-            cargo fuzz run "$t" -- -max_total_time=60 -rss_limit_mb=1024 2>&1 | tee "fuzz-$t.log" || report "fuzz target $t failed" "fuzz-$t.log"
+            cargo fuzz run --target x86_64-unknown-linux-gnu "$t" -- -max_total_time=60 -rss_limit_mb=1024 2>&1 | tee "fuzz-$t.log" || report "fuzz target $t failed" "fuzz-$t.log"
             echo "::endgroup::"
           done
       - name: Keep crashing inputs
