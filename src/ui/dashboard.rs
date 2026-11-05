@@ -12,8 +12,8 @@
 //! An empty vault gets one getting-started panel instead.
 
 use eframe::egui::{
-    self, Align2, Button, Color32, CursorIcon, FontId, Frame, Id, Key, Modifiers, Rect, RichText,
-    Sense, Stroke, TextEdit, Vec2,
+    self, Align2, Button, Color32, CursorIcon, FontId, Id, Key, Modifiers, Rect, RichText, Sense,
+    Stroke, TextEdit, Vec2,
 };
 use zeroize::Zeroizing;
 
@@ -38,6 +38,8 @@ const TILE_GAP: f32 = 8.0;
 const SECTION_GAP: f32 = 30.0;
 /// Readable content width on large windows.
 const MAX_WIDTH: f32 = 1040.0;
+/// Approximate height of the empty-vault welcome, for centring it.
+const EMPTY_BLOCK_H: f32 = 400.0;
 
 enum Act {
     Nav(Nav),
@@ -58,6 +60,14 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
         .id_salt("home")
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            if ms.vault.data().entries.is_empty() {
+                // A welcome in the middle of the page instead of an empty
+                // dashboard.
+                let free = ui.available_height() - EMPTY_BLOCK_H;
+                ui.add_space((free * 0.42).max(24.0));
+                widgets::centered_column(ui, 440.0, |ui| empty_vault(ui, &mut acts));
+                return;
+            }
             // Centred, and pushed down a little on tall windows, so a
             // maximised window doesn't leave everything in the top-left.
             let screen_h = ui.ctx().content_rect().height();
@@ -78,13 +88,6 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
 
 fn content(ui: &mut egui::Ui, ms: &mut MainState, acts: &mut Vec<Act>) {
     let count = ms.vault.data().entries.len();
-    if count == 0 {
-        new_item_row(ui, acts);
-        ui.add_space(18.0);
-        empty_vault(ui, acts);
-        return;
-    }
-
     top_bar(ui, &mut ms.home_query, count, acts);
     ui.add_space(SECTION_GAP);
 
@@ -116,12 +119,6 @@ fn new_item_button(ui: &mut egui::Ui, acts: &mut Vec<Act>) {
                 ui.close();
             }
         }
-    });
-}
-
-fn new_item_row(ui: &mut egui::Ui, acts: &mut Vec<Act>) {
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        new_item_button(ui, acts);
     });
 }
 
@@ -767,36 +764,70 @@ fn search_results(ui: &mut egui::Ui, ms: &MainState, q: &str, acts: &mut Vec<Act
     }
 }
 
+/// First run: what the vault is for and the three ways to fill it.
 fn empty_vault(ui: &mut egui::Ui, acts: &mut Vec<Act>) {
-    Frame::new()
-        .fill(surface())
-        .corner_radius(RADIUS)
-        .inner_margin(egui::Margin::symmetric(28, 26))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(strong("Nothing in this vault yet", 18.0));
-            ui.add_space(2.0);
-            ui.label(dim(
-                "Add your first login, or bring everything over from your browser or another password manager.",
-            ));
-            ui.add_space(16.0);
-            ui.horizontal(|ui| {
-                if widgets::primary_button(ui, &icons::with(kind_icon(EntryKind::Login), "Add a login"))
-                    .clicked()
-                {
-                    acts.push(Act::Nav(Nav::New(Category::Logins, EntryKind::Login)));
-                }
-                if widgets::secondary_button(ui, &icons::with(icons::DOWNLOAD_SIMPLE, "Import…"))
-                    .on_hover_text("CSV, JSON or a KeePass database (.kdbx)")
-                    .clicked()
-                {
-                    acts.push(Act::Import);
-                }
-            });
-            ui.add_space(14.0);
-            ui.label(faint(
-                "Import reads Chrome, Edge, Firefox, Bitwarden, 1Password, LastPass and KeePass exports, \
-                 entirely on this computer.",
-            ));
-        });
+    ui.vertical_centered(|ui| {
+        let (tile, _) = ui.allocate_exact_size(Vec2::splat(64.0), Sense::hover());
+        let p = ui.painter();
+        p.rect_filled(tile, 16.0, accent_bg());
+        p.text(
+            tile.center(),
+            Align2::CENTER_CENTER,
+            icons::VAULT,
+            FontId::proportional(32.0),
+            accent(),
+        );
+        ui.add_space(18.0);
+        ui.label(strong("Your vault is empty", 22.0));
+        ui.add_space(4.0);
+        ui.label(dim(
+            "Everything you save here is encrypted on this computer. Start with a login, \
+             or bring your passwords over from your browser.",
+        ));
+        ui.add_space(22.0);
+    });
+    if widgets::primary_button_wide(
+        ui,
+        &icons::with(kind_icon(EntryKind::Login), "Add a login"),
+        true,
+    )
+    .clicked()
+    {
+        acts.push(Act::Nav(Nav::New(Category::Logins, EntryKind::Login)));
+    }
+    ui.add_space(4.0);
+    if widgets::secondary_button_wide(
+        ui,
+        &icons::with(icons::DOWNLOAD_SIMPLE, "Import from a browser or password manager…"),
+    )
+    .on_hover_text("Chrome, Edge, Firefox, Bitwarden, 1Password, LastPass or KeePass — read entirely on this computer")
+    .clicked()
+    {
+        acts.push(Act::Import);
+    }
+    ui.add_space(4.0);
+    if widgets::secondary_button_wide(
+        ui,
+        &icons::with(icons::QR_CODE, "Scan a two-step (2FA) QR code"),
+    )
+    .on_hover_text("Show a site's 2FA setup QR code on screen and VaultRust reads it")
+    .clicked()
+    {
+        acts.push(Act::ScanQr);
+    }
+    ui.add_space(20.0);
+    ui.vertical_centered(|ui| ui.label(faint("Or add something else")));
+    ui.add_space(2.0);
+    let others = [
+        (EntryKind::CreditCard, "Card"),
+        (EntryKind::SecureNote, "Note"),
+        (EntryKind::Identity, "Identity"),
+        (EntryKind::ApiKey, "API key"),
+        (EntryKind::Wifi, "Wi-Fi"),
+    ];
+    let labels: Vec<&str> = others.iter().map(|(_, l)| *l).collect();
+    if let Some(i) = widgets::centered_links(ui, &labels) {
+        let k = others[i].0;
+        acts.push(Act::Nav(Nav::New(Category::for_kind(k), k)));
+    }
 }
