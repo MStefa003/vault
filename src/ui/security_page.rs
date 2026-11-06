@@ -20,6 +20,16 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, _svc: &mut Services) {
             let h = &ms.health;
             let data = ms.vault.data();
 
+            if h.total_passwords == 0 {
+                // A score for zero passwords would be meaningless.
+                widgets::card(ui, |ui| {
+                    ui.label(strong("Nothing to check yet", 15.0));
+                    ui.label(faint(
+                        "Once you add logins, VaultRust checks their passwords here for weak, reused and old ones.",
+                    ));
+                });
+                ui.add_space(20.0);
+            } else {
             score_card(ui, h.score, &format!(
                 "{} passwords checked · {} weak · {} reused · {} not changed in a year",
                 h.total_passwords,
@@ -28,7 +38,9 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, _svc: &mut Services) {
                 h.old.len()
             ));
             ui.add_space(20.0);
+            }
 
+            if h.total_passwords > 0 {
             match &ms.breach.report {
                 Some(b) if b.error.is_none() => {
                     heading(ui, "Found in data breaches", b.hits.len());
@@ -159,6 +171,7 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, _svc: &mut Services) {
                 });
             }
             ui.add_space(20.0);
+            }
             activity_log(ui, &data.audit);
             ui.add_space(16.0);
             ui.label(faint(format!(

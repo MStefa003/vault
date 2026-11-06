@@ -223,6 +223,15 @@ tampered with, and VaultRust reports exactly that.
   leave the heap out of crash reports (`WER_FAULT_REPORTING_FLAG_NOHEAP`) and
   suppresses the crash dialog. A full dump configured by an administrator
   (`LocalDumps`) or a debugger is not prevented.
+* **DLL loading.** At start-up the current directory is removed from the DLL
+  search path (`SetDllDirectoryW("")`) and the image-load mitigation policy is
+  set: no DLLs from network shares or low-integrity locations, and Windows'
+  System32 copy wins over a same-named DLL next to the program. This defeats
+  DLL planting, e.g. a malicious `version.dll` in the Downloads folder the
+  installer was run from.
+* **One running copy.** A named mutex (per user session) keeps VaultRust to a
+  single process, so two copies can't fight over the same vault; starting it
+  again only signals the running copy to show its window.
 
 **Limitations.** Rust and the OS do not give full control over memory. Copies of
 secrets can survive in: freed allocations from string growth while typing, the

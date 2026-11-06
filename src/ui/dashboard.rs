@@ -72,7 +72,9 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
             // maximised window doesn't leave everything in the top-left.
             let screen_h = ui.ctx().content_rect().height();
             ui.add_space(((screen_h - 820.0) / 6.0).clamp(4.0, 48.0));
-            widgets::centered_column(ui, MAX_WIDTH, |ui| content(ui, ms, &mut acts));
+            // Leave room for the scroll bar, which is drawn over the content.
+            let width = MAX_WIDTH.min(ui.available_width() - 16.0);
+            widgets::centered_column(ui, width, |ui| content(ui, ms, &mut acts));
         });
 
     for act in acts {

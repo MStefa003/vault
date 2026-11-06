@@ -764,6 +764,14 @@ fn render_screenshots() {
     .unwrap();
     h.state_mut().screen = Screen::Main(Box::new(MainState::new(empty)));
     shoot(&mut h, "03b-home-empty");
+    for (name, page) in [
+        ("03c-empty-logins", Page::Items(Category::Logins)),
+        ("03d-empty-security", Page::Security),
+        ("03e-empty-trash", Page::Trash),
+    ] {
+        main_state(&mut h).page = page;
+        shoot(&mut h, name);
+    }
 
     let mut v = UnlockedVault::open(&path, &SecretString::from(PW)).unwrap();
     for e in v.data_mut().entries.iter_mut().take(4) {

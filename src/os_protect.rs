@@ -11,6 +11,12 @@
 //!   can lock with it.
 //! * `WerSetFlags` / `SetErrorMode` keep the process heap — where decrypted
 //!   entries live — out of Windows Error Reporting crash reports.
+//! * `SetDllDirectoryW("")` and the image-load mitigation policy stop DLLs
+//!   being loaded from the current directory, network shares or low-integrity
+//!   locations, and make Windows' own copies win over same-named files next
+//!   to the program (DLL planting, e.g. in a Downloads folder).
+//! * A named mutex and event keep VaultRust to one running copy per user
+//!   session; starting it again brings the existing window forward.
 //! * `RegisterHotKey` plus a message loop on a dedicated thread implement the
 //!   global quick-open shortcut.
 //! * `RegGetValueW` / `RegSetKeyValueW` / `RegDeleteKeyValueW` manage the
@@ -92,11 +98,29 @@ pub fn harden_process() {
     use windows_sys::Win32::System::ErrorReporting::{
         WerSetFlags, WER_FAULT_REPORTING_FLAG_NOHEAP,
     };
-    // SAFETY: both calls only set flags for the current process.
+    use windows_sys::Win32::System::LibraryLoader::SetDllDirectoryW;
+    use windows_sys::Win32::System::SystemServices::PROCESS_MITIGATION_IMAGE_LOAD_POLICY;
+    use windows_sys::Win32::System::Threading::{
+        ProcessImageLoadPolicy, SetProcessMitigationPolicy,
+    };
+    // SAFETY: these calls only set flags for the current process. The
+    // policy struct is fully initialised and its size is passed with it.
     unsafe {
         let _ = WerSetFlags(WER_FAULT_REPORTING_FLAG_NOHEAP);
         let previous = SetErrorMode(0);
         SetErrorMode(previous | SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+        // An empty string removes the current directory from the DLL search
+        // path.
+        let empty = [0u16];
+        SetDllDirectoryW(empty.as_ptr());
+        let mut policy: PROCESS_MITIGATION_IMAGE_LOAD_POLICY = std::mem::zeroed();
+        // NoRemoteImages | NoLowMandatoryLabelImages | PreferSystem32Images.
+        policy.Anonymous.Flags = 0b111;
+        SetProcessMitigationPolicy(
+            ProcessImageLoadPolicy,
+            (&policy as *const PROCESS_MITIGATION_IMAGE_LOAD_POLICY).cast(),
+            std::mem::size_of::<PROCESS_MITIGATION_IMAGE_LOAD_POLICY>(),
+        );
     }
 }
 
@@ -175,8 +199,11 @@ pub struct ForeignWindow {
     pub title: String,
 }
 
-/// A press of one of the global hotkeys.
+/// A press of one of the global hotkeys, or another start of VaultRust
+/// asking this one to come forward.
 pub enum HotkeyEvent {
+    /// VaultRust was started again while already running.
+    Activate,
     QuickOpen,
     /// The window that was in front when the hotkey was pressed, or `None`
     /// if it was VaultRust itself (or there was none).
@@ -980,3 +1007,111 @@ pub fn record_installed_version(version: &str) {
 
 #[cfg(not(windows))]
 pub fn record_installed_version(_version: &str) {}
+
+/// Whether this is the only running VaultRust in the user's session.
+pub enum Instance {
+    /// Keep this alive for the life of the process.
+    First(InstanceGuard),
+    AlreadyRunning,
+}
+
+/// Holds the single-instance mutex; released when the process exits.
+pub struct InstanceGuard {
+    #[allow(dead_code)]
+    handle: isize,
+}
+
+#[cfg(windows)]
+const INSTANCE_MUTEX: &str = "Local\\VaultRust-single-instance";
+#[cfg(windows)]
+const ACTIVATE_EVENT: &str = "Local\\VaultRust-activate";
+
+/// Claim the single-instance lock. With `wait`, keep trying that long for
+/// a copy that is shutting down (the restart after an update).
+#[cfg(windows)]
+pub fn single_instance(wait: std::time::Duration) -> Instance {
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, WAIT_ABANDONED, WAIT_OBJECT_0,
+    };
+    use windows_sys::Win32::System::Threading::{CreateMutexW, WaitForSingleObject};
+    let name = run_key::wide(INSTANCE_MUTEX);
+    // SAFETY: NUL-terminated name, default security; the handle is kept for
+    // the life of the process (or closed right away if not needed).
+    unsafe {
+        let handle = CreateMutexW(std::ptr::null(), 1, name.as_ptr());
+        if handle.is_null() {
+            // Can't tell; don't stop the user from opening their vault.
+            return Instance::First(InstanceGuard { handle: 0 });
+        }
+        if GetLastError() != ERROR_ALREADY_EXISTS {
+            return Instance::First(InstanceGuard {
+                handle: handle as isize,
+            });
+        }
+        if !wait.is_zero() {
+            let r = WaitForSingleObject(handle, wait.as_millis().min(u32::MAX as u128) as u32);
+            if r == WAIT_OBJECT_0 || r == WAIT_ABANDONED {
+                return Instance::First(InstanceGuard {
+                    handle: handle as isize,
+                });
+            }
+        }
+        CloseHandle(handle);
+        Instance::AlreadyRunning
+    }
+}
+
+/// Ask the running copy to bring its window forward.
+#[cfg(windows)]
+pub fn activate_running_instance() {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenEventW, SetEvent, EVENT_MODIFY_STATE};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{AllowSetForegroundWindow, ASFW_ANY};
+    let name = run_key::wide(ACTIVATE_EVENT);
+    // SAFETY: NUL-terminated name; the handle is closed after use.
+    unsafe {
+        // This copy was just started by the user, so it may take the
+        // foreground; pass that permission on to the running copy.
+        AllowSetForegroundWindow(ASFW_ANY);
+        let h = OpenEventW(EVENT_MODIFY_STATE, 0, name.as_ptr());
+        if !h.is_null() {
+            SetEvent(h);
+            CloseHandle(h);
+        }
+    }
+}
+
+/// In the first copy: run `on_activate` (on a background thread) whenever
+/// VaultRust is started again.
+#[cfg(windows)]
+pub fn listen_for_activation(on_activate: impl Fn() + Send + 'static) {
+    use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject, INFINITE};
+    let name = run_key::wide(ACTIVATE_EVENT);
+    // SAFETY: NUL-terminated name, auto-reset event; the handle is owned by
+    // the listener thread, which lives as long as the process.
+    let event = unsafe { CreateEventW(std::ptr::null(), 0, 0, name.as_ptr()) };
+    if event.is_null() {
+        return;
+    }
+    let event = event as isize;
+    let _ = std::thread::Builder::new()
+        .name("vaultrust-activate".into())
+        .spawn(move || loop {
+            // SAFETY: `event` stays open for the life of the thread.
+            if unsafe { WaitForSingleObject(event as _, INFINITE) } != 0 {
+                return;
+            }
+            on_activate();
+        });
+}
+
+#[cfg(not(windows))]
+pub fn single_instance(_wait: std::time::Duration) -> Instance {
+    Instance::First(InstanceGuard { handle: 0 })
+}
+
+#[cfg(not(windows))]
+pub fn activate_running_instance() {}
+
+#[cfg(not(windows))]
+pub fn listen_for_activation(_on_activate: impl Fn() + Send + 'static) {}

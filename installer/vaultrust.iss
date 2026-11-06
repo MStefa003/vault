@@ -37,8 +37,10 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.17763
-; Close a running VaultRust (it locks and saves first) when upgrading.
-CloseApplications=yes
+; Close a running VaultRust when upgrading. "force" because a copy hidden in
+; the notification area treats a close request as "hide"; the vault is saved
+; after every change, so ending it loses nothing.
+CloseApplications=force
 RestartApplications=no
 
 [Tasks]

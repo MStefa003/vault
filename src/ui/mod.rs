@@ -43,6 +43,24 @@ pub fn run() -> eframe::Result<()> {
     // Started by Windows at sign-in: begin minimized (or hidden in the
     // notification area, below) rather than in the user's face.
     let startup = std::env::args().any(|a| a == crate::os_protect::STARTUP_ARG);
+    // One VaultRust per user session. Starting it again brings the running
+    // copy forward (except when Windows starts it at sign-in). After an
+    // update the old copy is still closing, so wait for it.
+    let after_update = std::env::args().any(|a| a == UPDATED_ARG);
+    let wait = if after_update {
+        Duration::from_secs(20)
+    } else {
+        Duration::ZERO
+    };
+    let _instance = match crate::os_protect::single_instance(wait) {
+        crate::os_protect::Instance::First(guard) => guard,
+        crate::os_protect::Instance::AlreadyRunning => {
+            if !startup {
+                crate::os_protect::activate_running_instance();
+            }
+            return Ok(());
+        }
+    };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("VaultRust")
@@ -66,6 +84,14 @@ pub fn run() -> eframe::Result<()> {
             // to the UI thread. The window may be hidden in the notification
             // area, where it gets no frames, so it is shown from here.
             let (tx, rx) = mpsc::channel();
+            {
+                let (tx, ctx, w) = (tx.clone(), cc.egui_ctx.clone(), window.clone());
+                crate::os_protect::listen_for_activation(move || {
+                    crate::os_protect::show_window(w.load(Ordering::Relaxed));
+                    let _ = tx.send(HotkeyEvent::Activate);
+                    ctx.request_repaint();
+                });
+            }
             let ctx = cc.egui_ctx.clone();
             let w = window.clone();
             app.hotkey_status = crate::os_protect::register_hotkeys(move |event| {
@@ -87,6 +113,9 @@ pub fn run() -> eframe::Result<()> {
         }),
     )
 }
+
+/// Passed to the new program when it is started after an update.
+const UPDATED_ARG: &str = "--updated";
 
 /// The notification-area (system tray) icon and its menu.
 mod tray {
@@ -560,8 +589,8 @@ impl VaultRustApp {
         if matches!(self.screen, Screen::Main(_)) {
             self.apply(ctx, Transition::Lock);
         }
-        let started =
-            std::env::current_exe().and_then(|exe| std::process::Command::new(exe).spawn());
+        let started = std::env::current_exe()
+            .and_then(|exe| std::process::Command::new(exe).arg(UPDATED_ARG).spawn());
         match started {
             Ok(_) => {
                 self.quitting = true;
