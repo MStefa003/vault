@@ -6,6 +6,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use crate::i18n::Language;
 use crate::storage::{atomic_write, WriteMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -21,11 +22,11 @@ impl ThemePref {
     pub const ALL: [ThemePref; 3] = [ThemePref::System, ThemePref::Light, ThemePref::Dark];
 
     pub fn label(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             ThemePref::System => "System",
             ThemePref::Light => "Light",
             ThemePref::Dark => "Dark",
-        }
+        })
     }
 
     fn key(self) -> &'static str {
@@ -58,6 +59,9 @@ pub struct AppPrefs {
     pub last_update_check: i64,
     /// The welcome tour was finished or skipped.
     pub tour_seen: bool,
+    /// Interface language (`None` = the Windows display language, if
+    /// VaultRust has it, otherwise English).
+    pub language: Option<Language>,
     persist: bool,
 }
 
@@ -69,6 +73,7 @@ impl Default for AppPrefs {
             check_updates: true,
             last_update_check: 0,
             tour_seen: false,
+            language: None,
             persist: false,
         }
     }
@@ -118,6 +123,7 @@ impl AppPrefs {
                 ("check_updates", v) => prefs.check_updates = v != "false",
                 ("last_update_check", v) => prefs.last_update_check = v.parse().unwrap_or(0),
                 ("tour_seen", v) => prefs.tour_seen = v == "true",
+                ("language", v) => prefs.language = Language::from_key(v),
                 _ => {}
             }
         }
@@ -126,13 +132,21 @@ impl AppPrefs {
 
     fn serialize(&self) -> String {
         format!(
-            "theme={}\nkeep_in_tray={}\ncheck_updates={}\nlast_update_check={}\ntour_seen={}\n",
+            "theme={}\nkeep_in_tray={}\ncheck_updates={}\nlast_update_check={}\ntour_seen={}\nlanguage={}\n",
             self.theme.key(),
             self.close_to_tray,
             self.check_updates,
             self.last_update_check,
-            self.tour_seen
+            self.tour_seen,
+            self.language.map_or("system", Language::key)
         )
+    }
+
+    /// The language to show.
+    pub fn effective_language(&self) -> Language {
+        self.language
+            .or_else(Language::from_system)
+            .unwrap_or_default()
     }
 
     pub fn save(&self) {
@@ -159,6 +173,7 @@ mod tests {
             check_updates: false,
             last_update_check: 1_700_000_000,
             tour_seen: true,
+            language: Some(Language::Greek),
             persist: false,
         };
         assert_eq!(AppPrefs::parse(&p.serialize()), p);

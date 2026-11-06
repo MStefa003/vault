@@ -119,10 +119,12 @@ pub enum GenerateError {
 impl std::fmt::Display for GenerateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            GenerateError::EmptyPool => f.write_str("select at least one character set"),
-            GenerateError::TooShortForClasses => {
-                f.write_str("the length is too short to include every selected character set")
+            GenerateError::EmptyPool => {
+                f.write_str(crate::i18n::tr("select at least one character set"))
             }
+            GenerateError::TooShortForClasses => f.write_str(crate::i18n::tr(
+                "the length is too short to include every selected character set",
+            )),
         }
     }
 }

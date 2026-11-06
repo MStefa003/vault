@@ -13,6 +13,8 @@ use crate::generator::{
     generate_passphrase, generate_password, wordlist, GeneratorOptions, PassphraseOptions,
     AMBIGUOUS, MAX_LENGTH, MAX_WORDS, MIN_LENGTH, MIN_WORDS,
 };
+use crate::i18n::tr;
+use crate::trf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -66,8 +68,8 @@ fn segmented(ui: &mut egui::Ui, mode: &mut Mode) {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
                 for (m, label) in [
-                    (Mode::Password, "Password"),
-                    (Mode::Passphrase, "Passphrase"),
+                    (Mode::Password, tr("Password")),
+                    (Mode::Passphrase, tr("Passphrase")),
                 ] {
                     let on = *mode == m;
                     let b = egui::Button::new(RichText::new(label).color(if on {
@@ -115,7 +117,7 @@ fn colored_secret(text: &str) -> egui::text::LayoutJob {
 }
 
 /// Toggleable pill.
-fn chip(ui: &mut egui::Ui, on: &mut bool, label: &str) -> egui::Response {
+pub fn chip(ui: &mut egui::Ui, on: &mut bool, label: &str) -> egui::Response {
     let (fill, stroke, color) = if *on {
         (accent_bg(), accent_fill(), text())
     } else {
@@ -147,8 +149,8 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
         .show(ui, |ui| {
             widgets::page_header(
                 ui,
-                "Generator",
-                "Uses the operating system's secure random number generator.",
+                tr("Generator"),
+                tr("Uses the operating system's secure random number generator."),
             );
 
             let mut g = ms.vault.data().settings.generator.clone();
@@ -171,13 +173,17 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
                         ui,
                         Align::Center,
                         |ui| {
-                            if widgets::primary_button(ui, &icons::with(icons::COPY, "Copy"))
+                            if widgets::primary_button(ui, &icons::with(icons::COPY, tr("Copy")))
                                 .clicked()
                             {
                                 copy = true;
                             }
-                            if widgets::icon_button(ui, icons::ARROWS_CLOCKWISE, "Generate another")
-                                .clicked()
+                            if widgets::icon_button(
+                                ui,
+                                icons::ARROWS_CLOCKWISE,
+                                tr("Generate another"),
+                            )
+                            .clicked()
                             {
                                 regenerate = true;
                             }
@@ -212,18 +218,22 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
                         ui.painter().rect_filled(part, 1.5, color);
                         ui.horizontal(|ui| {
                             ui.label(RichText::new(est.strength.label()).color(color).size(12.5));
-                            ui.label(faint(format!("· {bits:.0} bits of entropy")));
+                            ui.label(faint(trf!("· {bits:.0} bits of entropy", bits)));
                         });
                     }
                 });
             ui.add_space(12.0);
 
             match st.mode {
-                Mode::Password => section(ui, "Options", |ui| {
+                Mode::Password => section(ui, tr("Options"), |ui| {
                     widgets::setting_row(
                         ui,
-                        "Length",
-                        &format!("{MIN_LENGTH}–{MAX_LENGTH} characters"),
+                        tr("Length"),
+                        &trf!(
+                            "{MIN_LENGTH}–{MAX_LENGTH} characters",
+                            MIN_LENGTH,
+                            MAX_LENGTH
+                        ),
                         320.0,
                         |ui| {
                             ui.add_sized(
@@ -242,8 +252,8 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
                     widgets::divider(ui, 16.0);
                     widgets::setting_row(
                         ui,
-                        "Characters",
-                        &format!("{} possible characters", g.pool().len()),
+                        tr("Characters"),
+                        &trf!("{} possible characters", g.pool().len()),
                         330.0,
                         |ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
@@ -258,21 +268,21 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
                     widgets::switch_row(
                         ui,
                         &mut g.exclude_ambiguous,
-                        "Avoid look-alike characters",
+                        tr("Avoid look-alike characters"),
                         AMBIGUOUS,
                     );
                     widgets::divider(ui, 16.0);
                     widgets::switch_row(
                         ui,
                         &mut g.require_each_class,
-                        "Use every selected set at least once",
+                        tr("Use every selected set at least once"),
                         "",
                     );
                     widgets::divider(ui, 16.0);
                     widgets::setting_row(
                         ui,
-                        "Extra characters",
-                        "Added to the pool",
+                        tr("Extra characters"),
+                        tr("Added to the pool"),
                         240.0,
                         |ui| {
                             ui.add(
@@ -287,15 +297,15 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
                     widgets::switch_row(
                         ui,
                         &mut g.custom_only,
-                        "Use only the extra characters",
+                        tr("Use only the extra characters"),
                         "",
                     );
                 }),
-                Mode::Passphrase => section(ui, "Options", |ui| {
+                Mode::Passphrase => section(ui, tr("Options"), |ui| {
                     widgets::setting_row(
                         ui,
-                        "Words",
-                        &format!("From a list of {} words", wordlist().len()),
+                        tr("Words"),
+                        &trf!("From a list of {} words", wordlist().len()),
                         320.0,
                         |ui| {
                             ui.add_sized(
@@ -311,7 +321,7 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
                         },
                     );
                     widgets::divider(ui, 16.0);
-                    widgets::setting_row(ui, "Separator", "", 330.0, |ui| {
+                    widgets::setting_row(ui, tr("Separator"), "", 330.0, |ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
                         ui.add(
                             egui::TextEdit::singleline(&mut p.separator)
@@ -329,9 +339,9 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
                         }
                     });
                     widgets::divider(ui, 16.0);
-                    widgets::switch_row(ui, &mut p.capitalize, "Capitalize words", "");
+                    widgets::switch_row(ui, &mut p.capitalize, tr("Capitalize words"), "");
                     widgets::divider(ui, 16.0);
-                    widgets::switch_row(ui, &mut p.include_number, "Add a digit", "");
+                    widgets::switch_row(ui, &mut p.include_number, tr("Add a digit"), "");
                 }),
             }
 
@@ -346,8 +356,10 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
             }
             if copy && !st.output.is_empty() {
                 let out = st.output.clone();
-                ms.copy_secret(svc, &out, "Password");
+                ms.copy_secret(svc, &out, tr("Password"));
             }
+            ui.add_space(12.0);
+            site_rules(ui, ms, svc);
             let s = &ms.vault.data().settings;
             if s.generator != g || s.passphrase != p {
                 let settings = &mut ms.vault.data_mut().settings;
@@ -356,4 +368,55 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
                 ms.schedule_settings_save();
             }
         });
+}
+
+/// Saved per-site password rules, with their summary and buttons to change
+/// or remove them.
+fn site_rules(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
+    let rules = ms.vault.data().settings.site_rules.clone();
+    let mut edit = None;
+    let mut remove = None;
+    section(ui, tr("Site password rules"), |ui| {
+        if rules.is_empty() {
+            ui.label(faint(tr(
+                "Some sites limit length or symbols. Open a login, then use \
+                 “Set password rules for this site” under its password.",
+            )));
+            return;
+        }
+        ui.label(faint(tr(
+            "Used instead of the options above for these sites and their subdomains.",
+        )));
+        ui.add_space(4.0);
+        for (n, r) in rules.iter().enumerate() {
+            if n > 0 {
+                widgets::divider(ui, 16.0);
+            }
+            widgets::setting_row(
+                ui,
+                &r.host,
+                &super::entries::rule_summary(&r.options),
+                80.0,
+                |ui| {
+                    if widgets::icon_button(ui, icons::TRASH, tr("Remove")).clicked() {
+                        remove = Some(r.host.clone());
+                    }
+                    if widgets::icon_button(ui, icons::PENCIL_SIMPLE, tr("Edit")).clicked() {
+                        edit = Some(r.clone());
+                    }
+                },
+            );
+        }
+    });
+    if let Some(r) = edit {
+        ms.modal = Some(super::modals::Modal::SiteRule(
+            super::modals::SiteRuleState::new(r.host, r.options, true),
+        ));
+    }
+    if let Some(host) = remove {
+        if ms.vault.data_mut().settings.remove_site_rule(&host) && ms.commit(svc.toasts) {
+            svc.toasts
+                .info(crate::trf!("Removed the password rules for {host}", host));
+        }
+    }
 }

@@ -20,6 +20,7 @@ pub mod error;
 pub mod format;
 pub mod generator;
 pub mod hello;
+pub mod i18n;
 pub mod import_export;
 pub mod kdbx;
 pub mod model;

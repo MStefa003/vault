@@ -342,17 +342,25 @@ impl std::fmt::Debug for TypeStep {
 
 #[derive(Debug, thiserror::Error)]
 pub enum AutoTypeError {
-    #[error("the window to type into has closed")]
+    #[error("{}", crate::i18n::tr("the window to type into has closed"))]
     WindowGone,
-    #[error("couldn't switch to the window to type into")]
+    #[error("{}", crate::i18n::tr("couldn't switch to the window to type into"))]
     Focus,
-    #[error("another window took focus, so typing stopped")]
+    #[error("{}", crate::i18n::tr("another window took focus, so typing stopped"))]
     FocusLost,
-    #[error("release Ctrl, Shift and Alt so typing can start")]
+    #[error(
+        "{}",
+        crate::i18n::tr("release Ctrl, Shift and Alt so typing can start")
+    )]
     KeysHeld,
-    #[error("Windows blocked the typing (the target app may be running as administrator)")]
+    #[error(
+        "{}",
+        crate::i18n::tr(
+            "Windows blocked the typing (the target app may be running as administrator)"
+        )
+    )]
     Blocked,
-    #[error("auto-type is only available on Windows")]
+    #[error("{}", crate::i18n::tr("auto-type is only available on Windows"))]
     Unsupported,
 }
 
@@ -609,7 +617,7 @@ pub fn set_autostart(on: bool) -> Result<(), String> {
     if rc == 0 {
         Ok(())
     } else {
-        Err(format!("Windows refused the change (error {rc})"))
+        Err(crate::trf!("Windows refused the change (error {rc})", rc))
     }
 }
 
@@ -672,6 +680,25 @@ pub fn follow_system_menu_theme() {
             flush();
         }
     }
+}
+
+/// The Windows display language as an ISO 639-1 code, for the languages
+/// VaultRust has text for.
+#[cfg(windows)]
+pub fn user_ui_language() -> Option<&'static str> {
+    // SAFETY: no arguments; returns the user's UI language identifier.
+    let langid = unsafe { windows_sys::Win32::Globalization::GetUserDefaultUILanguage() };
+    // The low 10 bits are the primary language (LANG_*).
+    match langid & 0x3ff {
+        0x08 => Some("el"),
+        0x09 => Some("en"),
+        _ => None,
+    }
+}
+
+#[cfg(not(windows))]
+pub fn user_ui_language() -> Option<&'static str> {
+    None
 }
 
 /// Display scale in percent (100 at 96 DPI).
@@ -803,15 +830,15 @@ pub fn capture_screen_gray() -> Option<(Vec<u8>, usize, usize)> {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum HttpError {
-    #[error("only https:// addresses are allowed")]
+    #[error("{}", crate::i18n::tr("only https:// addresses are allowed"))]
     NotHttps,
-    #[error("no connection ({0})")]
+    #[error("{}", crate::i18n::format(crate::i18n::tr("no connection ({0})"), &[("0", .0)]))]
     Connect(u32),
-    #[error("the server answered {0}")]
+    #[error("{}", crate::i18n::format(crate::i18n::tr("the server answered {0}"), &[("0", .0)]))]
     Status(u32),
-    #[error("the download is larger than expected")]
+    #[error("{}", crate::i18n::tr("the download is larger than expected"))]
     TooLarge,
-    #[error("not available on this system")]
+    #[error("{}", crate::i18n::tr("not available on this system"))]
     Unsupported,
 }
 

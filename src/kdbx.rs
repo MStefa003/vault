@@ -78,15 +78,15 @@ const fn nibble(c: u8) -> u8 {
 
 #[derive(Debug, thiserror::Error)]
 pub enum KdbxError {
-    #[error("not a KeePass database")]
+    #[error("{}", crate::i18n::tr("not a KeePass database"))]
     NotKdbx,
-    #[error("KeePass database version {0}.{1} is not supported (3.1 and 4.x are)")]
+    #[error("{}", crate::i18n::format(crate::i18n::tr("KeePass database version {0}.{1} is not supported (3.1 and 4.x are)"), &[("0", .0), ("1", .1)]))]
     Version(u16, u16),
-    #[error("the KeePass database is damaged ({0})")]
+    #[error("{}", crate::i18n::format(crate::i18n::tr("the KeePass database is damaged ({0})"), &[("0", .0)]))]
     Corrupt(&'static str),
-    #[error("wrong password for this KeePass database (databases that also need a key file can't be imported)")]
+    #[error("{}", crate::i18n::tr("wrong password for this KeePass database (databases that also need a key file can't be imported)"))]
     WrongPassword,
-    #[error("unsupported KeePass setting: {0}")]
+    #[error("{}", crate::i18n::format(crate::i18n::tr("unsupported KeePass setting: {0}"), &[("0", .0)]))]
     Unsupported(&'static str),
 }
 
@@ -757,7 +757,7 @@ fn convert_entry(
         title.to_string()
     };
     if e.title.is_empty() {
-        e.title = "Imported item".into();
+        e.title = crate::i18n::tr("Imported item").into();
     }
     for (label, kind, value) in [
         ("Website", FieldKind::Url, url),
@@ -780,7 +780,7 @@ fn convert_entry(
         let field = match key.as_str() {
             "otp" | "TimeOtp-Secret-Base32" if !has_totp => {
                 has_totp = true;
-                Field::with_value("One-time code", FieldKind::Totp, value)
+                Field::with_value(crate::i18n::tr("One-time code"), FieldKind::Totp, value)
             }
             k if k.starts_with("TimeOtp-") || k == "otp" => continue,
             _ => Field::with_value(

@@ -40,19 +40,29 @@ const PLAIN_LEN: usize = KEY_LEN + 1 + KEY_LEN;
 
 #[derive(Debug, thiserror::Error)]
 pub enum HelloError {
-    #[error("Windows Hello isn't set up on this computer")]
+    #[error("{}", crate::i18n::tr("Windows Hello isn't set up on this computer"))]
     Unavailable,
-    #[error("Windows Hello was cancelled")]
+    #[error("{}", crate::i18n::tr("Windows Hello was cancelled"))]
     Cancelled,
-    #[error("Windows Hello isn't turned on for this vault")]
+    #[error("{}", crate::i18n::tr("Windows Hello isn't turned on for this vault"))]
     NotEnabled,
-    #[error("this computer's Windows Hello key can't be used for unlocking (its signatures vary)")]
+    #[error(
+        "{}",
+        crate::i18n::tr(
+            "this computer's Windows Hello key can't be used for unlocking (its signatures vary)"
+        )
+    )]
     NotDeterministic,
-    #[error("the Windows Hello unlock data doesn't match this vault; turn Hello off and on again")]
+    #[error(
+        "{}",
+        crate::i18n::tr(
+            "the Windows Hello unlock data doesn't match this vault; turn Hello off and on again"
+        )
+    )]
     Mismatch,
-    #[error("Windows Hello failed: {0}")]
+    #[error("{}", crate::i18n::format(crate::i18n::tr("Windows Hello failed: {0}"), &[("0", .0)]))]
     Platform(String),
-    #[error("couldn't save the Windows Hello unlock data: {0}")]
+    #[error("{}", crate::i18n::format(crate::i18n::tr("couldn't save the Windows Hello unlock data: {0}"), &[("0", .0)]))]
     Io(#[from] std::io::Error),
 }
 

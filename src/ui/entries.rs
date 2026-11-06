@@ -1,7 +1,9 @@
 //! Item manager: list, detail view and editor for every entry type.
 //!
-//! Shortcuts: Ctrl+F search, Ctrl+N new item, Ctrl+S save, Esc close editor,
-//! Ctrl+K quick open (from anywhere).
+//! Shortcuts: Ctrl+F search, Ctrl+N new item, Ctrl+S save, Esc close editor
+//! (or clear a multiple selection), Ctrl+K quick open (from anywhere).
+//! Ctrl+click, Shift+click and Ctrl+A select several items for tagging,
+//! favoriting or moving to the trash together.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -19,10 +21,12 @@ use super::theme::*;
 use super::widgets::{self, card, MASK};
 use super::Services;
 use crate::analysis::{estimate_strength, HealthReport};
-use crate::generator::{generate_password, GeneratorOptions};
-use crate::model::{Entry, EntryKind, Field, FieldKind, SortOrder};
+use crate::generator::generate_password;
+use crate::i18n::{plural, tr};
+use crate::model::{Entry, EntryKind, Field, FieldKind, SortOrder, VaultSettings};
 use crate::timeutil::{age_description, expiry_description, format_date, now_unix, parse_iso8601};
 use crate::totp::{format_code, Totp};
+use crate::trf;
 
 const SEARCH_ID: &str = "vaultrust_item_search";
 
@@ -56,16 +60,16 @@ impl Category {
 
     pub fn label(self) -> &'static str {
         match self {
-            Category::All => "All items",
-            Category::Favorites => "Favorites",
-            Category::Logins => "Logins",
-            Category::Notes => "Secure notes",
-            Category::Cards => "Cards",
-            Category::ApiKeys => "API keys",
-            Category::Identities => "Identities",
-            Category::Infrastructure => "Servers & databases",
+            Category::All => tr("All items"),
+            Category::Favorites => tr("Favorites"),
+            Category::Logins => tr("Logins"),
+            Category::Notes => tr("Secure notes"),
+            Category::Cards => tr("Cards"),
+            Category::ApiKeys => tr("API keys"),
+            Category::Identities => tr("Identities"),
+            Category::Infrastructure => tr("Servers & databases"),
             Category::Wifi => "Wi-Fi",
-            Category::Custom => "Other",
+            Category::Custom => tr("Other"),
         }
     }
 
@@ -166,6 +170,14 @@ pub struct ItemsState {
     /// Revealed (entry, field) pairs and when they were revealed. History
     /// items use field indices from [`HISTORY_BASE`] up.
     revealed: HashMap<(u64, usize), Instant>,
+    /// Items selected together (Ctrl+click, Shift+click, Ctrl+A), in the
+    /// order they were picked. Two or more replace the detail view with the
+    /// bulk actions.
+    picked: Vec<u64>,
+    /// Where a Shift+click range starts.
+    anchor: Option<u64>,
+    /// Tag typed into the bulk actions.
+    bulk_tag: String,
 }
 
 /// Reveal-state key offset for password-history rows.
@@ -176,12 +188,86 @@ impl ItemsState {
         self.selected = Some(id);
         self.editor = None;
         self.revealed.clear();
+        self.picked.clear();
+        self.anchor = Some(id);
     }
 
     pub fn new_entry(&mut self, kind: EntryKind) {
         self.selected = None;
         self.revealed.clear();
+        self.picked.clear();
         self.editor = Some(Editor::new(Entry::new(kind), true));
+    }
+
+    /// The items selected together (empty unless two or more are).
+    pub fn picked(&self) -> &[u64] {
+        if self.picked.len() > 1 {
+            &self.picked
+        } else {
+            &[]
+        }
+    }
+
+    pub fn clear_picked(&mut self) {
+        self.picked.clear();
+        self.bulk_tag.clear();
+    }
+
+    /// Select `ids` together (just one of them: select it normally).
+    pub fn pick_many(&mut self, ids: Vec<u64>) {
+        match ids.as_slice() {
+            [] => self.clear_picked(),
+            [one] => self.select(*one),
+            _ => {
+                self.editor = None;
+                self.revealed.clear();
+                self.picked = ids;
+            }
+        }
+    }
+
+    /// Ctrl+click: add or remove one item. The item shown before joins the
+    /// selection, so Ctrl+clicking a second item selects both.
+    fn toggle_pick(&mut self, id: u64) {
+        if self.picked.is_empty() {
+            if let Some(s) = self.selected.filter(|s| *s != id) {
+                self.picked.push(s);
+            }
+        }
+        match self.picked.iter().position(|p| *p == id) {
+            Some(i) => {
+                self.picked.remove(i);
+            }
+            None => self.picked.push(id),
+        }
+        self.anchor = Some(id);
+        let picked = std::mem::take(&mut self.picked);
+        if picked.is_empty() {
+            self.selected = None;
+            self.editor = None;
+        } else {
+            self.pick_many(picked);
+            self.anchor = Some(id);
+        }
+    }
+
+    /// Shift+click: everything in `visible` between the anchor and `id`.
+    fn pick_range(&mut self, id: u64, visible: &[u64]) {
+        let from = self.anchor.or(self.selected).unwrap_or(id);
+        let (Some(a), Some(b)) = (
+            visible.iter().position(|x| *x == from),
+            visible.iter().position(|x| *x == id),
+        ) else {
+            return self.select(id);
+        };
+        let (lo, hi) = (a.min(b), a.max(b));
+        let anchor = self.anchor;
+        self.pick_many(visible[lo..=hi].to_vec());
+        self.anchor = anchor.or(Some(from));
+    }
+
+    fn is_picked(&self, id: u64) -> bool {
+        self.picked().contains(&id)
     }
 
     /// Mask revealed secrets again once they have been visible for `timeout`.
@@ -219,6 +305,23 @@ enum Act {
     Attach,
     /// Look for a two-step verification QR code on screen.
     ScanQr,
+    /// Ctrl+click on a list row.
+    TogglePick(u64),
+    /// Shift+click on a list row, with the rows in list order.
+    PickRange(u64, Vec<u64>),
+    PickAll(Vec<u64>),
+    ClearPicked,
+    Bulk(Bulk),
+    /// Edit the password rules of the site the edited item is on.
+    EditSiteRule(String),
+}
+
+/// A change made to every selected item at once.
+enum Bulk {
+    Favorite(bool),
+    AddTag(String),
+    RemoveTag(String),
+    Trash,
 }
 
 /// Whether an entry belongs on a page showing `cat`, optionally narrowed to
@@ -245,14 +348,19 @@ pub fn show(
     // Keyboard shortcuts.
     let editing = ms.items.editor.is_some() && ms.modal.is_none();
     let popup_open = egui::Popup::is_any_open(ui.ctx());
-    let (find, new, save, escape) = ui.input_mut(|i| {
+    let picking = !ms.items.picked().is_empty() && ms.modal.is_none();
+    let (find, new, save, escape, unpick) = ui.input_mut(|i| {
         (
             i.consume_key(Modifiers::COMMAND, Key::F),
             i.consume_key(Modifiers::COMMAND, Key::N),
             editing && i.consume_key(Modifiers::COMMAND, Key::S),
             editing && !popup_open && i.consume_key(Modifiers::NONE, Key::Escape),
+            picking && !popup_open && i.consume_key(Modifiers::NONE, Key::Escape),
         )
     });
+    if unpick {
+        acts.push(Act::ClearPicked);
+    }
     if find {
         ui.memory_mut(|m| m.request_focus(Id::new(SEARCH_ID)));
     }
@@ -277,36 +385,29 @@ pub fn show(
         .iter()
         .filter(|e| on_page(e, cat, tag))
         .count();
-    widgets::page_header_with(
-        ui,
-        &title,
-        &format!("{count} item{}", if count == 1 { "" } else { "s" }),
-        |ui| {
-            let kinds = cat.kinds();
-            if kinds.len() == 1 {
-                if widgets::primary_button(ui, &icons::with(icons::PLUS, "New"))
-                    .on_hover_text("Ctrl+N")
-                    .clicked()
-                {
-                    acts.push(Act::Nav(Nav::New(cat, kinds[0])));
-                }
-            } else {
-                let resp = widgets::primary_button(
-                    ui,
-                    &format!("{}  New  {}", icons::PLUS, icons::CARET_DOWN),
-                );
-                egui::Popup::menu(&resp).show(|ui| {
-                    ui.set_min_width(180.0);
-                    for k in kinds {
-                        if ui.button(icons::with(kind_icon(*k), k.label())).clicked() {
-                            acts.push(Act::Nav(Nav::New(cat, *k)));
-                            ui.close();
-                        }
-                    }
-                });
+    widgets::page_header_with(ui, &title, &plural(count, "{n} item", "{n} items"), |ui| {
+        let kinds = cat.kinds();
+        if kinds.len() == 1 {
+            if widgets::primary_button(ui, &icons::with(icons::PLUS, tr("New")))
+                .on_hover_text("Ctrl+N")
+                .clicked()
+            {
+                acts.push(Act::Nav(Nav::New(cat, kinds[0])));
             }
-        },
-    );
+        } else {
+            let resp =
+                widgets::primary_button(ui, &trf!("{}  New  {}", icons::PLUS, icons::CARET_DOWN));
+            egui::Popup::menu(&resp).show(|ui| {
+                ui.set_min_width(180.0);
+                for k in kinds {
+                    if ui.button(icons::with(kind_icon(*k), k.label())).clicked() {
+                        acts.push(Act::Nav(Nav::New(cat, *k)));
+                        ui.close();
+                    }
+                }
+            });
+        }
+    });
 
     egui::SidePanel::left("items_list")
         .exact_width(310.0)
@@ -327,14 +428,10 @@ pub fn show(
             if let Some(ed) = &mut ms.items.editor {
                 let suggest = Suggestions::from_vault(data);
                 let scanning = ms.qr_job.is_some();
-                editor_ui(
-                    ui,
-                    ed,
-                    &data.settings.generator,
-                    &suggest,
-                    scanning,
-                    &mut acts,
-                );
+                editor_ui(ui, ed, &data.settings, &suggest, scanning, &mut acts);
+            } else if !ms.items.picked.is_empty() && ms.items.picked().len() > 1 {
+                let picked = ms.items.picked.clone();
+                bulk_ui(ui, data, &picked, &mut ms.items.bulk_tag, &mut acts);
             } else if let Some(e) = ms.items.selected.and_then(|id| data.entry(id)) {
                 let breach = ms.breach.report.as_ref();
                 detail_ui(ui, e, &ms.items.revealed, &ms.health, breach, &mut acts);
@@ -376,6 +473,23 @@ fn apply(ms: &mut MainState, svc: &mut Services, act: Act) {
         Act::SaveAttachment(id, i) => save_attachment(ms, svc, id, i),
         Act::Attach => attach_file(ms),
         Act::ScanQr => ms.qr_requested = true,
+        Act::TogglePick(id) => ms.items.toggle_pick(id),
+        Act::PickRange(id, visible) => ms.items.pick_range(id, &visible),
+        Act::PickAll(ids) => ms.items.pick_many(ids),
+        Act::ClearPicked => ms.items.clear_picked(),
+        Act::Bulk(op) => apply_bulk(ms, svc, op),
+        Act::EditSiteRule(url) => {
+            let settings = &ms.vault.data().settings;
+            let host = crate::autotype::url_host(&url);
+            let existing = settings.site_rules.iter().find(|r| r.host == host);
+            let options = existing.map_or_else(
+                || settings.generator_for(Some(&url)).clone(),
+                |r| r.options.clone(),
+            );
+            ms.modal = Some(super::modals::Modal::SiteRule(
+                super::modals::SiteRuleState::new(host, options, existing.is_some()),
+            ));
+        }
         Act::Save => {
             let Some(ed) = ms.items.editor.as_mut() else {
                 return;
@@ -385,11 +499,11 @@ fn apply(ms: &mut MainState, svc: &mut Services, act: Act) {
                 ed.entry.title = automatic_title(&ed.entry);
             }
             if ed.entry.title.is_empty() {
-                ed.error = Some("Enter a title (or a website, and it's named for you).".into());
+                ed.error = Some(tr("Enter a title (or a website, and it's named for you).").into());
                 return;
             }
             if ed.entry.fields.iter().any(|f| f.label.trim().is_empty()) {
-                ed.error = Some("Every field needs a label.".into());
+                ed.error = Some(tr("Every field needs a label.").into());
                 return;
             }
             if !ed.tag_input.trim().is_empty() {
@@ -400,7 +514,7 @@ fn apply(ms: &mut MainState, svc: &mut Services, act: Act) {
             }
             if !ed.entry.auto_type.trim().is_empty() {
                 if let Err(err) = crate::autotype::parse_sequence(&ed.entry.auto_type) {
-                    ed.error = Some(format!("Auto-type sequence: {err}"));
+                    ed.error = Some(trf!("Auto-type sequence: {err}", err));
                     return;
                 }
             }
@@ -408,7 +522,7 @@ fn apply(ms: &mut MainState, svc: &mut Services, act: Act) {
                 Ok(at) => ed.entry.expires = at,
                 Err(()) => {
                     ed.error =
-                        Some("Enter the expiry date as YYYY-MM-DD, or leave it empty.".into());
+                        Some(tr("Enter the expiry date as YYYY-MM-DD, or leave it empty.").into());
                     return;
                 }
             }
@@ -417,10 +531,7 @@ fn apply(ms: &mut MainState, svc: &mut Services, act: Act) {
                     && !f.value.trim().is_empty()
                     && Totp::parse(&f.value).is_err()
             }) {
-                ed.error = Some(format!(
-                    "“{}” is not a valid one-time code secret.",
-                    bad.label
-                ));
+                ed.error = Some(trf!("“{}” is not a valid one-time code secret.", bad.label));
                 return;
             }
             let entry = ed.entry.clone();
@@ -428,12 +539,245 @@ fn apply(ms: &mut MainState, svc: &mut Services, act: Act) {
             let is_new = ed.is_new;
             ms.vault.data_mut().upsert(entry);
             if ms.commit(svc.toasts) {
-                svc.toasts
-                    .success(if is_new { "Item added" } else { "Saved" });
+                svc.toasts.success(if is_new {
+                    tr("Item added")
+                } else {
+                    tr("Saved")
+                });
                 ms.items.select(id);
             }
         }
     }
+}
+
+fn apply_bulk(ms: &mut MainState, svc: &mut Services, op: Bulk) {
+    let ids = ms.items.picked().to_vec();
+    if ids.is_empty() {
+        return;
+    }
+    if let Bulk::Trash = op {
+        return ms.trash_many(svc, &ids);
+    }
+    let now = now_unix();
+    let mut changed = 0;
+    for id in &ids {
+        let Some(e) = ms.vault.data_mut().entry_mut(*id) else {
+            continue;
+        };
+        let did = match &op {
+            Bulk::Favorite(on) => std::mem::replace(&mut e.favorite, *on) != *on,
+            Bulk::AddTag(t) => e.add_tag(t),
+            Bulk::RemoveTag(t) => {
+                let before = e.tags.len();
+                e.tags.retain(|x| !x.eq_ignore_ascii_case(t));
+                e.tags.len() != before
+            }
+            Bulk::Trash => false,
+        };
+        if did {
+            e.modified = now;
+            changed += 1;
+        }
+    }
+    if changed == 0 || !ms.commit(svc.toasts) {
+        return;
+    }
+    let msg = match &op {
+        Bulk::Favorite(true) => plural(
+            changed,
+            tr("Added {n} item to favorites"),
+            tr("Added {n} items to favorites"),
+        ),
+        Bulk::Favorite(false) => plural(
+            changed,
+            tr("Removed {n} item from favorites"),
+            tr("Removed {n} items from favorites"),
+        ),
+        Bulk::AddTag(tag) => crate::i18n::format(
+            &plural(
+                changed,
+                tr("Tagged {n} item “{tag}”"),
+                tr("Tagged {n} items “{tag}”"),
+            ),
+            &[("tag", &tag.trim())],
+        ),
+        Bulk::RemoveTag(tag) => crate::i18n::format(
+            &plural(
+                changed,
+                tr("Removed “{tag}” from {n} item"),
+                tr("Removed “{tag}” from {n} items"),
+            ),
+            &[("tag", tag)],
+        ),
+        Bulk::Trash => String::new(),
+    };
+    svc.toasts.success(msg);
+    if let Bulk::AddTag(_) = op {
+        ms.items.bulk_tag.clear();
+    }
+}
+
+/// The detail pane while several items are selected: what they are, and
+/// what can be done to all of them at once.
+fn bulk_ui(
+    ui: &mut egui::Ui,
+    data: &crate::model::VaultData,
+    picked: &[u64],
+    tag_input: &mut String,
+    acts: &mut Vec<Act>,
+) {
+    let items: Vec<&Entry> = picked.iter().filter_map(|id| data.entry(*id)).collect();
+    card(ui, |ui| {
+        ui.set_min_height(ui.available_height());
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(40.0), Sense::hover());
+            ui.painter().rect_filled(rect, 8.0, accent_bg());
+            ui.painter().text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                icons::CHECKS,
+                FontId::proportional(20.0),
+                accent(),
+            );
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 1.0;
+                ui.label(strong(
+                    plural(
+                        items.len(),
+                        tr("{n} item selected"),
+                        tr("{n} items selected"),
+                    ),
+                    18.0,
+                ));
+                ui.label(faint(tr(
+                    "Ctrl+click to add or remove items, Shift+click for a range",
+                )));
+            });
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if widgets::secondary_button(ui, tr("Clear selection"))
+                    .on_hover_text("Esc")
+                    .clicked()
+                {
+                    acts.push(Act::ClearPicked);
+                }
+            });
+        });
+        ui.add_space(6.0);
+        ui.separator();
+        egui::ScrollArea::vertical()
+            .id_salt("bulk_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.add_space(6.0);
+                widgets::group(ui, |ui| {
+                    ui.add_space(7.0);
+                    ui.label(faint(tr("Favorites")));
+                    ui.horizontal(|ui| {
+                        let all_fav = items.iter().all(|e| e.favorite);
+                        let none_fav = items.iter().all(|e| !e.favorite);
+                        if ui
+                            .add_enabled(
+                                !all_fav,
+                                egui::Button::new(icons::with(icons::STAR, tr("Add to favorites"))),
+                            )
+                            .clicked()
+                        {
+                            acts.push(Act::Bulk(Bulk::Favorite(true)));
+                        }
+                        if ui
+                            .add_enabled(!none_fav, egui::Button::new(tr("Remove from favorites")))
+                            .clicked()
+                        {
+                            acts.push(Act::Bulk(Bulk::Favorite(false)));
+                        }
+                    });
+                    ui.add_space(6.0);
+                });
+                ui.add_space(10.0);
+                widgets::group(ui, |ui| {
+                    ui.add_space(7.0);
+                    ui.label(faint(tr("Tags")));
+                    ui.horizontal(|ui| {
+                        let resp = ui.add(
+                            TextEdit::singleline(tag_input)
+                                .hint_text(hint(tr("Tag to add…")))
+                                .desired_width(200.0)
+                                .margin(Vec2::new(8.0, 5.0)),
+                        );
+                        let entered = resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                        let ok = !tag_input.trim().is_empty();
+                        if (ui
+                            .add_enabled(
+                                ok,
+                                egui::Button::new(icons::with(icons::PLUS, tr("Add tag"))),
+                            )
+                            .clicked()
+                            || entered)
+                            && ok
+                        {
+                            acts.push(Act::Bulk(Bulk::AddTag(tag_input.trim().to_string())));
+                        }
+                    });
+                    // Tags already on some of the selected items: one click
+                    // adds them to the rest, the x removes them from all.
+                    let mut tags: Vec<(String, usize)> = Vec::new();
+                    for t in items.iter().flat_map(|e| e.tags.iter()) {
+                        match tags.iter_mut().find(|(x, _)| x.eq_ignore_ascii_case(t)) {
+                            Some((_, n)) => *n += 1,
+                            None => tags.push((t.clone(), 1)),
+                        }
+                    }
+                    tags.sort_by_key(|(t, _)| t.to_lowercase());
+                    if !tags.is_empty() {
+                        ui.add_space(4.0);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+                            for (t, n) in &tags {
+                                let label = if *n == items.len() {
+                                    t.clone()
+                                } else {
+                                    format!("{t} ({n}/{})", items.len())
+                                };
+                                if widgets::tag_chip_removable(ui, &label) {
+                                    acts.push(Act::Bulk(Bulk::RemoveTag(t.clone())));
+                                }
+                            }
+                        });
+                        ui.label(faint(tr("The × removes a tag from every selected item")));
+                    }
+                    ui.add_space(6.0);
+                });
+                ui.add_space(10.0);
+                if widgets::danger_button(
+                    ui,
+                    &icons::with(
+                        icons::TRASH,
+                        &plural(
+                            items.len(),
+                            tr("Move {n} item to Trash"),
+                            tr("Move {n} items to Trash"),
+                        ),
+                    ),
+                )
+                .clicked()
+                {
+                    acts.push(Act::Bulk(Bulk::Trash));
+                }
+                ui.add_space(14.0);
+                ui.label(faint(tr("Selected")));
+                ui.add_space(2.0);
+                for e in &items {
+                    ui.horizontal(|ui| {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::hover());
+                        widgets::entry_tile(ui, rect, e);
+                        ui.add(
+                            egui::Label::new(RichText::new(e.display_title()).color(text()))
+                                .truncate(),
+                        );
+                    });
+                }
+            });
+    });
 }
 
 fn save_attachment(ms: &mut MainState, svc: &mut Services, id: u64, i: usize) {
@@ -447,7 +791,7 @@ fn save_attachment(ms: &mut MainState, svc: &mut Services, id: u64, i: usize) {
         return;
     };
     let Some(path) = rfd::FileDialog::new()
-        .set_title("Save attachment")
+        .set_title(tr("Save attachment"))
         .set_file_name(a.safe_name())
         .save_file()
     else {
@@ -460,9 +804,9 @@ fn save_attachment(ms: &mut MainState, svc: &mut Services, id: u64, i: usize) {
                 .log(crate::model::AuditKind::AttachmentSaved, &a.name);
             ms.commit(svc.toasts);
             svc.toasts
-                .success(format!("Saved “{}” — that copy is not encrypted", a.name));
+                .success(trf!("Saved “{}” — that copy is not encrypted", a.name));
         }
-        Err(e) => svc.toasts.error(format!("Couldn't save the file: {e}")),
+        Err(e) => svc.toasts.error(trf!("Couldn't save the file: {e}", e)),
     }
 }
 
@@ -481,7 +825,7 @@ fn attach_file(ms: &mut MainState) {
         .unwrap_or(0);
     let others = ms.vault.data().attachment_bytes() - stored;
     let Some(path) = rfd::FileDialog::new()
-        .set_title("Attach a file")
+        .set_title(tr("Attach a file"))
         .pick_file()
     else {
         return;
@@ -495,14 +839,14 @@ fn attach_file(ms: &mut MainState) {
         .map(|m| m.len())
         .unwrap_or(u64::MAX);
     if len > MAX_ATTACHMENT_BYTES as u64 {
-        ed.error = Some(format!(
+        ed.error = Some(trf!(
             "Files up to {} MB can be attached.",
             mb(MAX_ATTACHMENT_BYTES)
         ));
         return;
     }
     if others + mine + len as usize > MAX_TOTAL_ATTACHMENT_BYTES {
-        ed.error = Some(format!(
+        ed.error = Some(trf!(
             "Attachments in a vault are limited to {} MB in total.",
             mb(MAX_TOTAL_ATTACHMENT_BYTES)
         ));
@@ -521,8 +865,8 @@ fn attach_file(ms: &mut MainState) {
             });
             ed.error = None;
         }
-        Ok(_) => ed.error = Some("The file changed while it was being read.".into()),
-        Err(e) => ed.error = Some(format!("Couldn't read the file: {e}")),
+        Ok(_) => ed.error = Some(tr("The file changed while it was being read.").into()),
+        Err(e) => ed.error = Some(trf!("Couldn't read the file: {e}", e)),
     }
 }
 
@@ -558,7 +902,7 @@ fn list_ui(
             ui.add(
                 TextEdit::singleline(&mut ms.items.search)
                     .id(Id::new(SEARCH_ID))
-                    .hint_text(hint(format!("{}  Search", icons::MAGNIFYING_GLASS)))
+                    .hint_text(hint(trf!("{}  Search", icons::MAGNIFYING_GLASS)))
                     .desired_width(f32::INFINITY)
                     .margin(Vec2::new(10.0, 7.0)),
             )
@@ -569,9 +913,9 @@ fn list_ui(
             ui.horizontal(|ui| {
                 ui.add_space(4.0);
                 ui.label(faint(if q.is_empty() {
-                    "Sort"
+                    tr("Sort")
                 } else {
-                    "Best match first"
+                    tr("Best match first")
                 }));
                 if q.is_empty() {
                     ui.scope(|ui| {
@@ -607,6 +951,16 @@ fn list_ui(
                     sb.cmp(sa).then_with(|| order.compare(a, b))
                 }
             });
+            let visible: Vec<u64> = list.iter().map(|(_, e)| e.id).collect();
+            let typing = ui.memory(|m| m.focused().is_some());
+            if !typing
+                && ms.items.editor.is_none()
+                && ms.modal.is_none()
+                && visible.len() > 1
+                && ui.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::A))
+            {
+                acts.push(Act::PickAll(visible.clone()));
+            }
             egui::ScrollArea::vertical()
                 .id_salt("items_scroll")
                 .auto_shrink([false, false])
@@ -616,9 +970,9 @@ fn list_ui(
                         ui.add_space(24.0);
                         ui.vertical_centered(|ui| {
                             ui.label(faint(if q.is_empty() {
-                                "Nothing here yet"
+                                tr("Nothing here yet")
                             } else {
-                                "No matches"
+                                tr("No matches")
                             }));
                         });
                     }
@@ -636,10 +990,24 @@ fn list_ui(
                         } else {
                             None
                         };
-                        let selected = ms.items.selected == Some(e.id) && ms.items.editor.is_none();
-                        let resp = entry_row(ui, e, selected, warn);
+                        let picked = ms.items.is_picked(e.id);
+                        let selected = picked
+                            || (ms.items.selected == Some(e.id)
+                                && ms.items.editor.is_none()
+                                && ms.items.picked().is_empty());
+                        let resp = entry_row(ui, e, selected, picked, warn);
                         if resp.clicked() {
-                            acts.push(Act::Nav(Nav::Select(e.id)));
+                            let m = ui.input(|i| i.modifiers);
+                            // Selecting several items never discards an
+                            // open editor; plain clicks go through the
+                            // usual unsaved-changes check.
+                            if ms.items.editor.is_none() && m.command {
+                                acts.push(Act::TogglePick(e.id));
+                            } else if ms.items.editor.is_none() && m.shift {
+                                acts.push(Act::PickRange(e.id, visible.clone()));
+                            } else {
+                                acts.push(Act::Nav(Nav::Select(e.id)));
+                            }
                         }
                         resp.context_menu(|ui| quick_copy_menu(ui, e, acts));
                     }
@@ -651,18 +1019,18 @@ fn list_ui(
 fn quick_copy_menu(ui: &mut egui::Ui, e: &Entry, acts: &mut Vec<Act>) {
     ui.set_min_width(170.0);
     let mut any = false;
-    for (kind, label) in [
-        (FieldKind::Username, "Copy username"),
-        (FieldKind::Email, "Copy email"),
-        (FieldKind::Password, "Copy password"),
-        (FieldKind::Url, "Copy website"),
+    for (kind, label, what) in [
+        (FieldKind::Username, tr("Copy username"), tr("Username")),
+        (FieldKind::Email, tr("Copy email"), tr("Email")),
+        (FieldKind::Password, tr("Copy password"), tr("Password")),
+        (FieldKind::Url, tr("Copy website"), tr("Website")),
     ] {
         if let Some(v) = e.first_of(kind) {
             any = true;
             if ui.button(icons::with(icons::COPY, label)).clicked() {
                 acts.push(Act::Copy(
                     Zeroizing::new(v.to_string()),
-                    label.trim_start_matches("Copy ").to_string(),
+                    what.to_string(),
                     e.id,
                 ));
                 ui.close();
@@ -672,12 +1040,15 @@ fn quick_copy_menu(ui: &mut egui::Ui, e: &Entry, acts: &mut Vec<Act>) {
     if let Some(totp) = e.totp_secret().and_then(|s| Totp::parse(s).ok()) {
         any = true;
         if ui
-            .button(icons::with(icons::CLOCK_COUNTDOWN, "Copy one-time code"))
+            .button(icons::with(
+                icons::CLOCK_COUNTDOWN,
+                tr("Copy one-time code"),
+            ))
             .clicked()
         {
             acts.push(Act::Copy(
                 Zeroizing::new(totp.code_at(now_unix())),
-                "One-time code".into(),
+                tr("One-time code").into(),
                 e.id,
             ));
             ui.close();
@@ -687,7 +1058,7 @@ fn quick_copy_menu(ui: &mut egui::Ui, e: &Entry, acts: &mut Vec<Act>) {
         ui.separator();
     }
     if ui
-        .button(icons::with(icons::PENCIL_SIMPLE, "Edit"))
+        .button(icons::with(icons::PENCIL_SIMPLE, tr("Edit")))
         .clicked()
     {
         acts.push(Act::Nav(Nav::Select(e.id)));
@@ -695,7 +1066,7 @@ fn quick_copy_menu(ui: &mut egui::Ui, e: &Entry, acts: &mut Vec<Act>) {
         ui.close();
     }
     if ui
-        .button(icons::with(icons::TRASH, "Move to Trash"))
+        .button(icons::with(icons::TRASH, tr("Move to Trash")))
         .clicked()
     {
         acts.push(Act::Delete(e.id));
@@ -707,6 +1078,7 @@ fn entry_row(
     ui: &mut egui::Ui,
     e: &Entry,
     selected: bool,
+    picked: bool,
     warn: Option<egui::Color32>,
 ) -> egui::Response {
     let (rect, resp) =
@@ -718,7 +1090,20 @@ fn entry_row(
         painter.rect_filled(rect, 6.0, row_hover());
     }
     let tile = Rect::from_center_size(rect.left_center() + Vec2::new(22.0, 0.0), Vec2::splat(30.0));
-    widgets::entry_tile(ui, tile, e);
+    if picked {
+        // A check mark in place of the tile, so the selection reads at a
+        // glance.
+        painter.rect_filled(tile, (tile.width() * 0.24).round(), accent_fill());
+        painter.text(
+            tile.center(),
+            Align2::CENTER_CENTER,
+            icons::CHECK,
+            FontId::proportional(16.0),
+            egui::Color32::WHITE,
+        );
+    } else {
+        widgets::entry_tile(ui, tile, e);
+    }
 
     let mut right = rect.right() - 10.0;
     for (show, icon, color) in [
@@ -778,32 +1163,30 @@ fn empty_detail(ui: &mut egui::Ui, vault_page_empty: bool) {
             ui.label(RichText::new(icons::VAULT).size(32.0).color(text_faint()));
             ui.add_space(4.0);
             ui.label(dim(if vault_page_empty {
-                "Add your first item with New (Ctrl+N)."
+                tr("Add your first item with New (Ctrl+N).")
             } else {
-                "Select an item to see its details."
+                tr("Select an item to see its details.")
             }));
+            if !vault_page_empty {
+                ui.add_space(2.0);
+                ui.label(faint(tr(
+                    "Ctrl+click or Shift+click to select several and change them together.",
+                )));
+            }
         });
     });
 }
 
 fn header_row(
     ui: &mut egui::Ui,
-    icon: &str,
+    entry: &Entry,
     title: &str,
     subtitle: &str,
     right: impl FnOnce(&mut egui::Ui),
 ) {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(40.0), Sense::hover());
-        let p = ui.painter();
-        p.rect_filled(rect, 8.0, surface_2());
-        p.text(
-            rect.center(),
-            Align2::CENTER_CENTER,
-            icon,
-            FontId::proportional(20.0),
-            text_dim(),
-        );
+        widgets::entry_tile(ui, rect, entry);
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 1.0;
             ui.add(egui::Label::new(strong(title, 18.0)).truncate());
@@ -827,17 +1210,17 @@ fn detail_ui(
             Some(host) if !host.is_empty() => format!("{}  ·  {host}", e.kind.label()),
             _ => e.kind.label().to_string(),
         };
-        header_row(ui, kind_icon(e.kind), e.display_title(), &subtitle, |ui| {
-            if widgets::icon_button(ui, icons::TRASH, "Move to Trash").clicked() {
+        header_row(ui, e, e.display_title(), &subtitle, |ui| {
+            if widgets::icon_button(ui, icons::TRASH, tr("Move to Trash")).clicked() {
                 acts.push(Act::Delete(e.id));
             }
-            if widgets::icon_button(ui, icons::PENCIL_SIMPLE, "Edit").clicked() {
+            if widgets::icon_button(ui, icons::PENCIL_SIMPLE, tr("Edit")).clicked() {
                 acts.push(Act::Edit(e.id));
             }
             let fav_tip = if e.favorite {
-                "Remove from favorites"
+                tr("Remove from favorites")
             } else {
-                "Add to favorites"
+                tr("Add to favorites")
             };
             if widgets::toggle_icon(ui, e.favorite, icons::STAR, fav_tip).clicked() {
                 acts.push(Act::ToggleFav(e.id));
@@ -856,13 +1239,13 @@ fn detail_ui(
                     widgets::pill(ui, &expiry_description(at, now), color);
                 }
                 if breached {
-                    widgets::pill(ui, "Found in a data breach", danger());
+                    widgets::pill(ui, tr("Found in a data breach"), danger());
                 }
                 if weak {
-                    widgets::pill(ui, "Weak password", danger());
+                    widgets::pill(ui, tr("Weak password"), danger());
                 }
                 if reused {
-                    widgets::pill(ui, "Reused password", warn());
+                    widgets::pill(ui, tr("Reused password"), warn());
                 }
                 for t in &e.tags {
                     widgets::tag_chip(ui, t);
@@ -899,10 +1282,10 @@ fn detail_ui(
                             ui,
                             Align::Center,
                             |ui| {
-                                if widgets::icon_button(ui, icons::COPY, "Copy").clicked() {
+                                if widgets::icon_button(ui, icons::COPY, tr("Copy")).clicked() {
                                     acts.push(Act::Copy(
                                         Zeroizing::new(e.notes.clone()),
-                                        "Note".into(),
+                                        tr("Note").into(),
                                         e.id,
                                     ));
                                 }
@@ -910,9 +1293,9 @@ fn detail_ui(
                             |ui| {
                                 ui.add_space(7.0);
                                 ui.label(faint(if e.kind == EntryKind::SecureNote {
-                                    "Note"
+                                    tr("Note")
                                 } else {
-                                    "Notes"
+                                    tr("Notes")
                                 }));
                             },
                         );
@@ -924,13 +1307,13 @@ fn detail_ui(
                     ui.add_space(10.0);
                     widgets::group(ui, |ui| {
                         ui.add_space(7.0);
-                        ui.label(faint("Attachments"));
+                        ui.label(faint(tr("Attachments")));
                         for (i, a) in e.attachments.iter().enumerate() {
                             attachment_row(ui, a, |ui| {
                                 if widgets::icon_button(
                                     ui,
                                     icons::DOWNLOAD_SIMPLE,
-                                    "Save to a file…",
+                                    tr("Save to a file…"),
                                 )
                                 .clicked()
                                 {
@@ -942,30 +1325,30 @@ fn detail_ui(
                     });
                 }
                 if shown.is_empty() && e.notes.is_empty() && e.attachments.is_empty() {
-                    ui.label(dim("Empty. Use Edit to add details."));
+                    ui.label(dim(tr("Empty. Use Edit to add details.")));
                 }
                 if !e.history.is_empty() {
                     ui.add_space(10.0);
                     history_ui(ui, e, revealed, acts);
                 }
                 ui.add_space(14.0);
-                let mut meta = format!(
+                let mut meta = trf!(
                     "Created {}  ·  Updated {}",
                     format_date(e.created),
                     format_date(e.modified)
                 );
                 if e.primary_password().is_some() {
-                    meta.push_str(&format!(
+                    meta.push_str(&trf!(
                         "  ·  Password changed {}",
                         age_description(e.password_changed, now_unix())
                     ));
                 }
                 if let Some(at) = e.effective_expiry() {
-                    meta.push_str(&format!("  ·  Expires {}", format_date(at)));
+                    meta.push_str(&trf!("  ·  Expires {}", format_date(at)));
                 }
                 ui.label(faint(meta));
                 if !e.auto_type.trim().is_empty() {
-                    ui.label(faint(format!(
+                    ui.label(faint(trf!(
                         "{}  Auto-type: {}",
                         icons::KEYBOARD,
                         e.auto_type.trim()
@@ -996,7 +1379,7 @@ fn field_view(
         42.0,
         if tall { Align::Min } else { Align::Center },
         |ui| {
-            if widgets::icon_button(ui, icons::COPY, "Copy").clicked() {
+            if widgets::icon_button(ui, icons::COPY, tr("Copy")).clicked() {
                 acts.push(Act::Copy(
                     Zeroizing::new(f.value.clone()),
                     f.label.clone(),
@@ -1013,7 +1396,7 @@ fn field_view(
                     ui,
                     revealed,
                     icon,
-                    if revealed { "Hide" } else { "Reveal" },
+                    if revealed { tr("Hide") } else { tr("Reveal") },
                 )
                 .clicked()
                 {
@@ -1075,7 +1458,7 @@ fn copy_on_click(
     let resp = ui
         .interact(target, Id::new(("copy_row", id, i)), Sense::click())
         .on_hover_cursor(CursorIcon::PointingHand)
-        .on_hover_text(format!("Click to copy {}", label.to_lowercase()));
+        .on_hover_text(trf!("Click to copy {}", label.to_lowercase()));
     if resp.hovered() {
         ui.painter().set(
             bg,
@@ -1107,10 +1490,10 @@ fn totp_view(ui: &mut egui::Ui, id: u64, i: usize, f: &Field, revealed: bool, ac
         Align::Center,
         |ui| {
             if let Ok(t) = &parsed {
-                if widgets::icon_button(ui, icons::COPY, "Copy code").clicked() {
+                if widgets::icon_button(ui, icons::COPY, tr("Copy code")).clicked() {
                     acts.push(Act::Copy(
                         Zeroizing::new(t.code_at(now)),
-                        "One-time code".into(),
+                        tr("One-time code").into(),
                         id,
                     ));
                 }
@@ -1121,9 +1504,9 @@ fn totp_view(ui: &mut egui::Ui, id: u64, i: usize, f: &Field, revealed: bool, ac
                 icons::EYE
             };
             let tip = if revealed {
-                "Hide secret"
+                tr("Hide secret")
             } else {
-                "Show secret"
+                tr("Show secret")
             };
             if widgets::toggle_icon(ui, revealed, icon, tip).clicked() {
                 acts.push(Act::Reveal(id, i));
@@ -1164,7 +1547,7 @@ fn history_ui(
     revealed: &HashMap<(u64, usize), Instant>,
     acts: &mut Vec<Act>,
 ) {
-    egui::CollapsingHeader::new(small(format!(
+    egui::CollapsingHeader::new(small(trf!(
         "{}  Password history ({})",
         icons::CLOCK_COUNTER_CLOCKWISE,
         e.history.len()
@@ -1184,22 +1567,22 @@ fn history_ui(
                     40.0,
                     Align::Center,
                     |ui| {
-                        if widgets::icon_button(ui, icons::COPY, "Copy").clicked() {
+                        if widgets::icon_button(ui, icons::COPY, tr("Copy")).clicked() {
                             acts.push(Act::Copy(
                                 Zeroizing::new(h.value.clone()),
-                                "Old password".into(),
+                                tr("Old password").into(),
                                 e.id,
                             ));
                         }
                         let icon = if shown { icons::EYE_SLASH } else { icons::EYE };
-                        let tip = if shown { "Hide" } else { "Reveal" };
+                        let tip = if shown { tr("Hide") } else { tr("Reveal") };
                         if widgets::toggle_icon(ui, shown, icon, tip).clicked() {
                             acts.push(Act::Reveal(e.id, key));
                         }
                     },
                     |ui| {
                         ui.spacing_mut().item_spacing.y = 1.0;
-                        ui.label(faint(format!(
+                        ui.label(faint(trf!(
                             "{} · replaced {}",
                             h.label,
                             age_description(h.replaced, now)
@@ -1228,6 +1611,138 @@ enum FieldOp {
     Reveal(usize),
     Generate(usize),
     ScanQr,
+    EditRule(String),
+}
+
+/// The website of the item being edited, for its password rules.
+struct RuleHint {
+    url: String,
+    host: String,
+    /// The rule that applies (its host may be a parent domain).
+    rule: Option<(String, crate::generator::GeneratorOptions)>,
+}
+
+/// "16 characters · A–Z a–z 0–9" (what generated passwords will be like).
+pub fn rule_summary(g: &crate::generator::GeneratorOptions) -> String {
+    let mut sets: Vec<&str> = Vec::new();
+    if g.custom_only {
+        sets.push(tr("only the extra characters"));
+    } else {
+        for (on, label) in [
+            (g.uppercase, "A–Z"),
+            (g.lowercase, "a–z"),
+            (g.digits, "0–9"),
+            (g.symbols, "!#$%&*"),
+        ] {
+            if on {
+                sets.push(label);
+            }
+        }
+    }
+    let mut out = plural(g.length as usize, "{n} character", "{n} characters");
+    if !sets.is_empty() {
+        out.push_str(" · ");
+        out.push_str(&sets.join(" "));
+    }
+    if !g.custom_only && !g.custom_chars.trim().is_empty() {
+        out.push_str(&format!(" +{}", g.custom_chars.trim()));
+    }
+    out
+}
+
+/// The item's tile, which opens a menu of icons and colours to give it.
+fn icon_picker(ui: &mut egui::Ui, e: &mut Entry) {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::click());
+    widgets::entry_tile(ui, rect, e);
+    if resp.hovered() {
+        ui.painter().rect_stroke(
+            rect,
+            8.0,
+            Stroke::new(1.5_f32, accent()),
+            egui::StrokeKind::Outside,
+        );
+    }
+    let resp = resp
+        .on_hover_text(tr("Change icon and colour"))
+        .on_hover_cursor(CursorIcon::PointingHand);
+    egui::Popup::menu(&resp)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.set_width(316.0);
+            ui.label(small(tr("Icon")));
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::splat(4.0);
+                let letter = e
+                    .title
+                    .chars()
+                    .find(|c| c.is_alphanumeric())
+                    .map_or_else(|| "Aa".to_string(), |c| c.to_uppercase().to_string());
+                if swatch(ui, &letter, e.icon.is_empty(), None)
+                    .on_hover_text(tr("First letter of the title"))
+                    .clicked()
+                {
+                    e.icon.clear();
+                }
+                for (key, glyph) in icons::ITEM_ICONS {
+                    if swatch(ui, glyph, e.icon == *key, None).clicked() {
+                        e.icon = key.to_string();
+                    }
+                }
+            });
+            ui.add_space(8.0);
+            ui.label(small(tr("Colour")));
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::splat(4.0);
+                if swatch(ui, icons::GLOBE, e.color == 0, None)
+                    .on_hover_text(tr("Automatic: the same for every item on a website"))
+                    .clicked()
+                {
+                    e.color = 0;
+                }
+                for (i, c) in widgets::TILE_COLORS.iter().enumerate() {
+                    let n = (i + 1) as u8;
+                    if swatch(ui, "", e.color == n, Some(*c)).clicked() {
+                        e.color = n;
+                    }
+                }
+            });
+        });
+}
+
+/// One choice in the icon menu: a glyph, or a colour (`fill`).
+fn swatch(ui: &mut egui::Ui, glyph: &str, on: bool, fill: Option<egui::Color32>) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
+    let p = ui.painter();
+    match fill {
+        Some(c) => {
+            p.rect_filled(rect.shrink(3.0), 6.0, c);
+        }
+        None if on => {
+            p.rect_filled(rect, 6.0, accent_bg());
+        }
+        None if resp.hovered() => {
+            p.rect_filled(rect, 6.0, row_hover());
+        }
+        None => {}
+    }
+    if on {
+        p.rect_stroke(
+            rect,
+            6.0,
+            Stroke::new(1.5_f32, accent()),
+            egui::StrokeKind::Inside,
+        );
+    }
+    if !glyph.is_empty() {
+        p.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            glyph,
+            FontId::proportional(15.0),
+            if on { accent() } else { text_dim() },
+        );
+    }
+    resp.on_hover_cursor(CursorIcon::PointingHand)
 }
 
 /// Usernames and email addresses used most often in the vault, offered as
@@ -1296,7 +1811,7 @@ fn automatic_title(e: &Entry) -> String {
 fn editor_ui(
     ui: &mut egui::Ui,
     ed: &mut Editor,
-    gen: &GeneratorOptions,
+    settings: &VaultSettings,
     suggest: &Suggestions,
     scanning: bool,
     acts: &mut Vec<Act>,
@@ -1304,23 +1819,23 @@ fn editor_ui(
     card(ui, |ui| {
         ui.set_min_height(ui.available_height());
         let title = if ed.is_new {
-            format!("New {}", ed.entry.kind.noun())
+            trf!("New {}", ed.entry.kind.noun())
         } else {
-            "Edit".to_string()
+            tr("Edit").to_string()
         };
         let subtitle = if ed.is_dirty() {
-            "Unsaved changes"
+            tr("Unsaved changes")
         } else {
             ed.entry.kind.label()
         };
-        header_row(ui, kind_icon(ed.entry.kind), &title, subtitle, |ui| {
-            if widgets::secondary_button(ui, "Cancel")
+        header_row(ui, &ed.entry, &title, subtitle, |ui| {
+            if widgets::secondary_button(ui, tr("Cancel"))
                 .on_hover_text("Esc")
                 .clicked()
             {
                 acts.push(Act::Nav(Nav::CloseEditor));
             }
-            if widgets::primary_button(ui, "Save")
+            if widgets::primary_button(ui, tr("Save"))
                 .on_hover_text("Ctrl+S")
                 .clicked()
             {
@@ -1334,13 +1849,34 @@ fn editor_ui(
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.add_space(4.0);
-                ui.label(small("Title"));
-                let r = widgets::text_input(ui, &mut ed.entry.title, "Leave empty to name it after the website");
+                ui.label(small(tr("Title")));
+                let r = ui
+                    .horizontal(|ui| {
+                        icon_picker(ui, &mut ed.entry);
+                        widgets::text_input(
+                            ui,
+                            &mut ed.entry.title,
+                            tr("Leave empty to name it after the website"),
+                        )
+                    })
+                    .inner;
                 if ed.is_new && ed.entry.title.is_empty() && !ui.ctx().memory(|m| m.has_focus(r.id))
                 {
                     r.request_focus();
                 }
                 ui.add_space(6.0);
+
+                // Password rules belong to the item's website.
+                let url = ed.entry.first_of(FieldKind::Url).map(str::to_string);
+                let rule = url.as_deref().and_then(|u| {
+                    let host = crate::autotype::url_host(u);
+                    (!host.is_empty()).then(|| RuleHint {
+                        url: u.to_string(),
+                        host,
+                        rule: settings.site_rule(u).map(|r| (r.host.clone(), r.options.clone())),
+                    })
+                });
+                let gen = settings.generator_for(url.as_deref()).clone();
 
                 let mut ops = Vec::new();
                 let n = ed.entry.fields.len();
@@ -1352,7 +1888,8 @@ fn editor_ui(
                             }
                             let reveal = ed.reveal.contains_key(&i);
                             let s = suggest.for_kind(f.kind);
-                            field_editor(ui, i, n, f, reveal, s, scanning, &mut ops);
+                            let r = rule.as_ref().filter(|_| f.kind == FieldKind::Password);
+                            field_editor(ui, i, n, f, reveal, s, scanning, r, &mut ops);
                         }
                     });
                     ui.add_space(2.0);
@@ -1377,7 +1914,8 @@ fn editor_ui(
                             }
                         }
                         FieldOp::ScanQr => acts.push(Act::ScanQr),
-                        FieldOp::Generate(i) => match generate_password(gen) {
+                        FieldOp::EditRule(url) => acts.push(Act::EditSiteRule(url)),
+                        FieldOp::Generate(i) => match generate_password(&gen) {
                             Ok(pw) => {
                                 let f = &mut ed.entry.fields[i];
                                 f.value.zeroize();
@@ -1393,17 +1931,17 @@ fn editor_ui(
                 let has_code = ed.entry.fields.iter().any(|f| f.kind == FieldKind::Totp);
                 let mut add = None;
                 ui.horizontal(|ui| {
-                    add = Some(widgets::link_button(ui, &icons::with(icons::PLUS, "Add field")));
+                    add = Some(widgets::link_button(ui, &icons::with(icons::PLUS, tr("Add field"))));
                     if !has_code {
                         if scanning {
                             ui.add(egui::Spinner::new().size(14.0));
-                            ui.label(faint("Looking for a QR code…"));
+                            ui.label(faint(tr("Looking for a QR code…")));
                         } else if widgets::link_button(
                             ui,
-                            &icons::with(icons::QR_CODE, "Scan two-step QR code"),
+                            &icons::with(icons::QR_CODE, tr("Scan two-step QR code")),
                         )
                         .on_hover_text(
-                            "Shows the site's 2FA setup QR code on screen? VaultRust reads it — no typing",
+                            tr("Shows the site's 2FA setup QR code on screen? VaultRust reads it — no typing"),
                         )
                         .clicked()
                         {
@@ -1417,12 +1955,12 @@ fn editor_ui(
                     for k in FieldKind::ALL {
                         if ui.button(k.label()).clicked() {
                             let label = match k {
-                                FieldKind::Password => "Password",
-                                FieldKind::Username => "Username",
-                                FieldKind::Email => "Email",
-                                FieldKind::Url => "Website",
-                                FieldKind::Totp => "One-time code",
-                                _ => "Field",
+                                FieldKind::Password => tr("Password"),
+                                FieldKind::Username => tr("Username"),
+                                FieldKind::Email => tr("Email"),
+                                FieldKind::Url => tr("Website"),
+                                FieldKind::Totp => tr("One-time code"),
+                                _ => tr("Field"),
                             };
                             ed.entry.fields.push(Field::new(label, k));
                             ui.close();
@@ -1431,11 +1969,11 @@ fn editor_ui(
                 });
                 ui.add_space(8.0);
 
-                ui.label(small("Attachments"));
+                ui.label(small(tr("Attachments")));
                 let mut remove = None;
                 for (i, a) in ed.entry.attachments.iter().enumerate() {
                     attachment_row(ui, a, |ui| {
-                        if widgets::icon_button(ui, icons::X, "Remove").clicked() {
+                        if widgets::icon_button(ui, icons::X, tr("Remove")).clicked() {
                             remove = Some(i);
                         }
                     });
@@ -1443,15 +1981,15 @@ fn editor_ui(
                 if let Some(i) = remove {
                     ed.entry.attachments.remove(i);
                 }
-                if widgets::link_button(ui, &icons::with(icons::PAPERCLIP, "Attach file…"))
-                    .on_hover_text("Stored encrypted inside the vault, up to 10 MB per file")
+                if widgets::link_button(ui, &icons::with(icons::PAPERCLIP, tr("Attach file…")))
+                    .on_hover_text(tr("Stored encrypted inside the vault, up to 10 MB per file"))
                     .clicked()
                 {
                     acts.push(Act::Attach);
                 }
                 ui.add_space(8.0);
 
-                ui.label(small("Tags"));
+                ui.label(small(tr("Tags")));
                 tags_editor(ui, ed);
                 ui.add_space(8.0);
 
@@ -1459,7 +1997,7 @@ fn editor_ui(
                 ui.add_space(8.0);
 
                 let is_note = ed.entry.kind == EntryKind::SecureNote;
-                ui.label(small(if is_note { "Note" } else { "Notes" }));
+                ui.label(small(if is_note { tr("Note") } else { tr("Notes") }));
                 ui.add(
                     TextEdit::multiline(&mut ed.entry.notes)
                         .desired_rows(if is_note { 14 } else { 3 })
@@ -1483,6 +2021,7 @@ fn field_editor(
     reveal: bool,
     suggest: &[String],
     scanning: bool,
+    rule: Option<&RuleHint>,
     ops: &mut Vec<FieldOp>,
 ) {
     // The type is only worth showing when the label doesn't already say it.
@@ -1494,10 +2033,10 @@ fn field_editor(
         |ui| {
             // Type, order and removal live in one menu instead of four
             // controls on every field.
-            let more = widgets::icon_button(ui, icons::DOTS_THREE, "Field options");
+            let more = widgets::icon_button(ui, icons::DOTS_THREE, tr("Field options"));
             egui::Popup::menu(&more).show(|ui| {
                 ui.set_min_width(190.0);
-                ui.menu_button(icons::with(icons::TEXT_AA, "Type"), |ui| {
+                ui.menu_button(icons::with(icons::TEXT_AA, tr("Type")), |ui| {
                     for k in FieldKind::ALL {
                         if ui.selectable_label(f.kind == k, k.label()).clicked() {
                             f.kind = k;
@@ -1509,7 +2048,7 @@ fn field_editor(
                 if ui
                     .add_enabled(
                         i > 0,
-                        egui::Button::new(icons::with(icons::ARROW_UP, "Move up")),
+                        egui::Button::new(icons::with(icons::ARROW_UP, tr("Move up"))),
                     )
                     .clicked()
                 {
@@ -1519,7 +2058,7 @@ fn field_editor(
                 if ui
                     .add_enabled(
                         i + 1 < n,
-                        egui::Button::new(icons::with(icons::ARROW_DOWN, "Move down")),
+                        egui::Button::new(icons::with(icons::ARROW_DOWN, tr("Move down"))),
                     )
                     .clicked()
                 {
@@ -1529,7 +2068,8 @@ fn field_editor(
                 ui.separator();
                 if ui
                     .button(
-                        RichText::new(icons::with(icons::TRASH, "Remove field")).color(danger()),
+                        RichText::new(icons::with(icons::TRASH, tr("Remove field")))
+                            .color(danger()),
                     )
                     .clicked()
                 {
@@ -1545,7 +2085,7 @@ fn field_editor(
             ui.add(
                 TextEdit::singleline(&mut f.label)
                     .desired_width(ui.available_width().min(260.0))
-                    .hint_text(hint("Label"))
+                    .hint_text(hint(tr("Label")))
                     .font(TextStyle::Small)
                     .text_color(text_dim())
                     .frame(false)
@@ -1560,7 +2100,7 @@ fn field_editor(
         Align::Min,
         |ui| {
             if kind == FieldKind::Password
-                && widgets::icon_button(ui, icons::DICE_FIVE, "Generate a strong password")
+                && widgets::icon_button(ui, icons::DICE_FIVE, tr("Generate a strong password"))
                     .clicked()
             {
                 ops.push(FieldOp::Generate(i));
@@ -1571,7 +2111,7 @@ fn field_editor(
                         [widgets::ICON_BUTTON, widgets::ICON_BUTTON],
                         egui::Spinner::new(),
                     );
-                } else if widgets::icon_button(ui, icons::QR_CODE, "Scan the QR code on screen")
+                } else if widgets::icon_button(ui, icons::QR_CODE, tr("Scan the QR code on screen"))
                     .clicked()
                 {
                     ops.push(FieldOp::ScanQr);
@@ -1579,8 +2119,13 @@ fn field_editor(
             }
             if kind.is_concealed() {
                 let icon = if reveal { icons::EYE_SLASH } else { icons::EYE };
-                if widgets::toggle_icon(ui, reveal, icon, if reveal { "Hide" } else { "Reveal" })
-                    .clicked()
+                if widgets::toggle_icon(
+                    ui,
+                    reveal,
+                    icon,
+                    if reveal { tr("Hide") } else { tr("Reveal") },
+                )
+                .clicked()
                 {
                     ops.push(FieldOp::Reveal(i));
                 }
@@ -1590,7 +2135,7 @@ fn field_editor(
             if kind.is_multiline() {
                 if concealed {
                     ui.add_space(6.0);
-                    ui.label(faint("Hidden — reveal to view or edit"));
+                    ui.label(faint(tr("Hidden — reveal to view or edit")));
                 } else {
                     ui.add(
                         TextEdit::multiline(&mut f.value)
@@ -1615,6 +2160,44 @@ fn field_editor(
     if f.kind == FieldKind::Password && !f.value.is_empty() {
         widgets::strength_meter(ui, &estimate_strength(&f.value));
     }
+    if let Some(r) = rule {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let link = match &r.rule {
+                Some((host, g)) => {
+                    ui.label(
+                        RichText::new(format!(
+                            "{}  {host}: {}",
+                            icons::SLIDERS_HORIZONTAL,
+                            rule_summary(g)
+                        ))
+                        .size(12.0)
+                        .color(text_dim()),
+                    );
+                    tr("Change")
+                }
+                None => {
+                    ui.label(
+                        RichText::new(icons::SLIDERS_HORIZONTAL)
+                            .size(12.0)
+                            .color(text_faint()),
+                    );
+                    tr("Set password rules for this site")
+                }
+            };
+            if ui
+                .add(egui::Button::new(RichText::new(link).size(12.0).color(accent())).frame(false))
+                .on_hover_text(trf!(
+                    "Length and characters the generator uses for {} and its subdomains",
+                    r.host
+                ))
+                .on_hover_cursor(CursorIcon::PointingHand)
+                .clicked()
+            {
+                ops.push(FieldOp::EditRule(r.url.clone()));
+            }
+        });
+    }
     if f.value.is_empty() && !suggest.is_empty() {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
@@ -1626,7 +2209,7 @@ fn field_editor(
                             .corner_radius(10.0)
                             .min_size(Vec2::new(0.0, 22.0)),
                     )
-                    .on_hover_text("Use this")
+                    .on_hover_text(tr("Use this"))
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
                 {
@@ -1637,12 +2220,14 @@ fn field_editor(
     }
     if f.kind == FieldKind::Totp {
         let hint = if f.value.trim().is_empty() {
-            RichText::new("Scan the QR code on screen, or paste the site's setup key")
-                .size(12.0)
-                .color(text_faint())
+            RichText::new(tr(
+                "Scan the QR code on screen, or paste the site's setup key",
+            ))
+            .size(12.0)
+            .color(text_faint())
         } else {
             match Totp::parse(&f.value) {
-                Ok(t) => RichText::new(format!(
+                Ok(t) => RichText::new(trf!(
                     "Valid · current code {}",
                     format_code(&t.code_at(now_unix()))
                 ))
@@ -1668,11 +2253,11 @@ fn parse_expiry(text: &str) -> Result<i64, ()> {
 /// Expiry date and custom auto-type sequence, folded away by default.
 fn more_options(ui: &mut egui::Ui, ed: &mut Editor) {
     let open_by_default = !ed.expiry_text.is_empty() || !ed.entry.auto_type.is_empty();
-    egui::CollapsingHeader::new(small("Expiry and auto-type"))
+    egui::CollapsingHeader::new(small(tr("Expiry and auto-type")))
         .id_salt(("more_options", ed.entry.id))
         .default_open(open_by_default)
         .show(ui, |ui| {
-            ui.label(small("Expires or needs changing on"));
+            ui.label(small(tr("Expires or needs changing on")));
             ui.horizontal(|ui| {
                 ui.add(
                     TextEdit::singleline(&mut ed.expiry_text)
@@ -1681,20 +2266,24 @@ fn more_options(ui: &mut egui::Ui, ed: &mut Editor) {
                         .margin(Vec2::new(10.0, 6.0)),
                 );
                 let now = now_unix();
-                for (label, days) in [("30 days", 30), ("90 days", 90), ("1 year", 365)] {
+                for (label, days) in [
+                    (tr("30 days"), 30),
+                    (tr("90 days"), 90),
+                    (tr("1 year"), 365),
+                ] {
                     if widgets::secondary_button(ui, label).clicked() {
                         ed.expiry_text = format_date(now + days * 86_400);
                     }
                 }
-                if !ed.expiry_text.is_empty() && widgets::link_button(ui, "Never").clicked() {
+                if !ed.expiry_text.is_empty() && widgets::link_button(ui, tr("Never")).clicked() {
                     ed.expiry_text.clear();
                 }
             });
             let hint = match parse_expiry(&ed.expiry_text) {
-                Err(()) => RichText::new("Use the format YYYY-MM-DD")
+                Err(()) => RichText::new(tr("Use the format YYYY-MM-DD"))
                     .size(12.0)
                     .color(danger()),
-                Ok(0) => RichText::new("Shown under Needs attention two weeks before the date")
+                Ok(0) => RichText::new(tr("Shown under Needs attention two weeks before the date"))
                     .size(12.0)
                     .color(text_faint()),
                 Ok(at) => RichText::new(expiry_description(at, now_unix()))
@@ -1704,7 +2293,7 @@ fn more_options(ui: &mut egui::Ui, ed: &mut Editor) {
             ui.label(hint);
             ui.add_space(8.0);
 
-            ui.label(small("Auto-type sequence"));
+            ui.label(small(tr("Auto-type sequence")));
             ui.add(
                 TextEdit::singleline(&mut ed.entry.auto_type)
                     .hint_text(super::theme::hint(crate::autotype::DEFAULT_SEQUENCE))
@@ -1713,15 +2302,17 @@ fn more_options(ui: &mut egui::Ui, ed: &mut Editor) {
                     .margin(Vec2::new(10.0, 7.0)),
             );
             let hint = if ed.entry.auto_type.trim().is_empty() {
-                RichText::new(
+                RichText::new(tr(
                     "Default: username, Tab, password, Enter. Placeholders: {USERNAME} {PASSWORD} \
                      {TOTP} {TAB} {ENTER} {DELAY 1000} {FIELD:label}",
-                )
+                ))
                 .size(12.0)
                 .color(text_faint())
             } else {
                 match crate::autotype::parse_sequence(&ed.entry.auto_type) {
-                    Ok(_) => RichText::new("Valid sequence").size(12.0).color(accent()),
+                    Ok(_) => RichText::new(tr("Valid sequence"))
+                        .size(12.0)
+                        .color(accent()),
                     Err(e) => RichText::new(e).size(12.0).color(danger()),
                 }
             };
@@ -1742,7 +2333,7 @@ fn tags_editor(ui: &mut egui::Ui, ed: &mut Editor) {
         }
         let resp = ui.add(
             TextEdit::singleline(&mut ed.tag_input)
-                .hint_text(hint("Add tag…"))
+                .hint_text(hint(tr("Add tag…")))
                 .desired_width(140.0)
                 .margin(Vec2::new(8.0, 4.0)),
         );

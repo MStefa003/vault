@@ -62,21 +62,22 @@ impl std::fmt::Display for Version {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum UpdateError {
-    #[error("couldn't reach GitHub: {0}")]
+    #[error("{}", crate::i18n::format(crate::i18n::tr("couldn't reach GitHub: {0}"), &[("0", .0)]))]
     Network(String),
-    #[error("GitHub's answer couldn't be read")]
+    #[error("{}", crate::i18n::tr("GitHub's answer couldn't be read"))]
     BadResponse,
-    #[error("the release is missing {0}")]
+    #[error("{}", crate::i18n::format(crate::i18n::tr("the release is missing {0}"), &[("0", .0)]))]
     MissingAsset(&'static str),
-    #[error("the download's signature is not valid — it was not installed")]
-    BadSignature,
-    #[error("the download is too large")]
-    TooLarge,
     #[error(
-        "couldn't replace the program file ({0}); download the new version from GitHub instead"
+        "{}",
+        crate::i18n::tr("the download's signature is not valid — it was not installed")
     )]
+    BadSignature,
+    #[error("{}", crate::i18n::tr("the download is too large"))]
+    TooLarge,
+    #[error("{}", crate::i18n::format(crate::i18n::tr("couldn't replace the program file ({0}); download the new version from GitHub instead"), &[("0", .0)]))]
     Install(String),
-    #[error("updates are only available on Windows")]
+    #[error("{}", crate::i18n::tr("updates are only available on Windows"))]
     Unsupported,
 }
 

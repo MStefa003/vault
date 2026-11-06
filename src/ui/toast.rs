@@ -15,10 +15,12 @@ enum Kind {
 }
 
 /// What a toast's button does when clicked.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToastAction {
     /// Put a just-trashed item back.
     RestoreEntry(u64),
+    /// Put several just-trashed items back.
+    RestoreEntries(Vec<u64>),
 }
 
 struct Toast {
@@ -74,14 +76,15 @@ impl Toasts {
             .iter()
             .rev()
             .filter(|t| t.until > now)
-            .find_map(|t| t.action.map(|(_, a)| a))
+            .find_map(|t| t.action.as_ref().map(|(_, a)| a.clone()))
     }
 
     /// Take the action whose button was clicked (or that was triggered by
     /// [`Toasts::trigger`]), removing its toast.
     pub fn take_clicked(&mut self) -> Option<ToastAction> {
         let a = self.clicked.take()?;
-        self.items.retain(|t| t.action.map(|(_, x)| x) != Some(a));
+        self.items
+            .retain(|t| t.action.as_ref().map(|(_, x)| x) != Some(&a));
         Some(a)
     }
 
@@ -141,12 +144,12 @@ impl Toasts {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(icon).color(color).size(15.0));
                                 ui.label(RichText::new(msg).color(text()));
-                                if let Some((label, action)) = t.action {
+                                if let Some((label, action)) = &t.action {
                                     ui.add_space(6.0);
                                     let b = ui
                                         .add(
                                             egui::Button::new(
-                                                RichText::new(label)
+                                                RichText::new(*label)
                                                     .color(accent())
                                                     .family(semibold()),
                                             )
@@ -155,7 +158,7 @@ impl Toasts {
                                         .on_hover_text("Ctrl+Z")
                                         .on_hover_cursor(egui::CursorIcon::PointingHand);
                                     if b.clicked() {
-                                        clicked = Some(action);
+                                        clicked = Some(action.clone());
                                     }
                                 }
                             });

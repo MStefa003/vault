@@ -36,6 +36,8 @@ use crate::prefs::AppPrefs;
 use crate::recent::RecentVaults;
 use crate::vault::UnlockedVault;
 
+use crate::i18n::tr;
+use crate::trf;
 pub use toast::Toasts;
 
 /// Launch the desktop application.
@@ -78,6 +80,7 @@ pub fn run() -> eframe::Result<()> {
         Box::new(|cc| {
             let mut app = VaultRustApp::new(&cc.egui_ctx);
             app.prefs = AppPrefs::load();
+            crate::i18n::set_language(app.prefs.effective_language());
             let window = app.window.clone();
             app.minimize_on_start = startup;
 
@@ -108,11 +111,52 @@ pub fn run() -> eframe::Result<()> {
                     app.tray_events = Some(rx);
                     app.hide_on_start = startup && app.prefs.close_to_tray;
                 }
-                None => app.toasts.error("Couldn't add the notification-area icon"),
+                None => app
+                    .toasts
+                    .error(tr("Couldn't add the notification-area icon")),
             }
             Ok(Box::new(app))
         }),
     )
+}
+
+/// A drop-down of interface languages ("Windows setting" first). Changes
+/// apply at once and are saved with the app preferences.
+pub fn language_picker(ui: &mut egui::Ui, prefs: &mut AppPrefs) {
+    use crate::i18n::{tr, Language};
+    let system = Language::from_system().unwrap_or_default();
+    let label = |choice: Option<Language>| match choice {
+        None => crate::trf!("Windows setting ({})", system.native_name()),
+        Some(l) => l.native_name().to_string(),
+    };
+    let mut choice = prefs.language;
+    egui::ComboBox::from_id_salt("language")
+        .width(190.0)
+        .icon(widgets::combo_caret)
+        .selected_text(format!("{}  {}", icons::GLOBE, label(choice)))
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut choice, None, label(None));
+            for l in Language::ALL {
+                ui.selectable_value(&mut choice, Some(l), label(Some(l)));
+            }
+        })
+        .response
+        .on_hover_text(tr("Language"));
+    if choice != prefs.language {
+        prefs.language = choice;
+        prefs.save();
+        crate::i18n::set_language(prefs.effective_language());
+        ui.ctx().request_repaint();
+    }
+}
+
+/// The language picker in the top-right corner of the screens shown before
+/// a vault is open.
+fn language_corner(ctx: &egui::Context, prefs: &mut AppPrefs) {
+    egui::Area::new(egui::Id::new("language_corner"))
+        .anchor(egui::Align2::RIGHT_TOP, [-16.0, 14.0])
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| language_picker(ui, prefs));
 }
 
 /// Passed to the new program when it is started after an update.
@@ -133,6 +177,8 @@ mod tray {
     };
 
     use super::icons;
+    use crate::i18n::tr;
+    use crate::trf;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum Action {
@@ -160,12 +206,14 @@ mod tray {
                 return;
             }
             let text = match &state {
-                Some(name) => format!("{name} — unlocked"),
-                None => "Locked".to_string(),
+                Some(name) => trf!("{name} — unlocked", name),
+                None => tr("Locked").to_string(),
             };
-            self.status.set_text(format!("VaultRust  ·  {text}"));
+            self.status.set_text(trf!("VaultRust  ·  {text}", text));
             self.lock.set_enabled(state.is_some());
-            let _ = self.icon.set_tooltip(Some(format!("VaultRust — {text}")));
+            let _ = self
+                .icon
+                .set_tooltip(Some(trf!("VaultRust — {text}", text)));
             self.shown = Some(state);
         }
     }
@@ -211,16 +259,16 @@ mod tray {
         let item =
             |text: String, icon: &str| IconMenuItem::new(text, true, glyph(icon, dark), None);
 
-        let status = MenuItem::new("VaultRust  ·  Locked", false, None);
-        let open = item("Open VaultRust".into(), icons::APP_WINDOW);
+        let status = MenuItem::new(tr("VaultRust  ·  Locked"), false, None);
+        let open = item(tr("Open VaultRust").into(), icons::APP_WINDOW);
         let quick = item(
-            format!("Quick open	{}", crate::os_protect::QUICK_OPEN_HOTKEY),
+            trf!("Quick open	{}", crate::os_protect::QUICK_OPEN_HOTKEY),
             icons::MAGNIFYING_GLASS,
         );
-        let lock = item("Lock now".into(), icons::LOCK);
+        let lock = item(tr("Lock now").into(), icons::LOCK);
         lock.set_enabled(false);
-        let settings = item("Settings".into(), icons::GEAR_SIX);
-        let quit = item("Quit".into(), icons::POWER);
+        let settings = item(tr("Settings").into(), icons::GEAR_SIX);
+        let quit = item(tr("Quit").into(), icons::POWER);
         let menu = Menu::new();
         menu.append_items(&[
             &status,
@@ -244,7 +292,7 @@ mod tray {
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(false)
-            .with_tooltip("VaultRust — Locked")
+            .with_tooltip(tr("VaultRust — Locked"))
             .with_icon(Icon::from_rgba(icon.rgba, icon.width, icon.height).ok()?)
             .build()
             .ok()?;
@@ -421,7 +469,7 @@ impl VaultRustApp {
             if let HotkeyEvent::AutoType(None) = event {
                 // Pressed while VaultRust itself was in front: nothing to
                 // type into.
-                self.toasts.info(format!(
+                self.toasts.info(trf!(
                     "Click into a login form in another app, then press {}",
                     crate::os_protect::AUTO_TYPE_HOTKEY
                 ));
@@ -569,6 +617,9 @@ impl VaultRustApp {
             Screen::Unlock(s) => unlock::show(ctx, s, &mut svc),
             Screen::Main(m) => m.show(ctx, &mut svc),
         };
+        if !matches!(self.screen, Screen::Main(_)) {
+            language_corner(ctx, svc.prefs);
+        }
         if let Some(t) = transition {
             self.apply(ctx, t);
         }
@@ -597,8 +648,9 @@ impl VaultRustApp {
                 self.quitting = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
-            Err(e) => self.toasts.error(format!(
-                "Updated — start VaultRust again to use the new version ({e})"
+            Err(e) => self.toasts.error(trf!(
+                "Updated — start VaultRust again to use the new version ({e})",
+                e
             )),
         }
     }
@@ -635,7 +687,7 @@ impl VaultRustApp {
                 };
                 self.clipboard.clear_now();
                 self.forget_ui_state(ctx);
-                self.toasts.info("Vault locked");
+                self.toasts.info(tr("Vault locked"));
             }
             Transition::Reload => {
                 let path = match &self.screen {
@@ -648,7 +700,8 @@ impl VaultRustApp {
                 };
                 self.clipboard.clear_now();
                 self.forget_ui_state(ctx);
-                self.toasts.info("Unlock again to load the current file");
+                self.toasts
+                    .info(tr("Unlock again to load the current file"));
             }
         }
     }

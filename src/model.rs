@@ -23,7 +23,8 @@ use crate::timeutil::now_unix;
 /// * 5 — adds entry expiry dates and custom auto-type sequences, and the
 ///   activity log.
 /// * 6 — adds file attachments.
-pub const SCHEMA_VERSION: u32 = 6;
+/// * 7 — adds entry icons and colours, and per-site password rules.
+pub const SCHEMA_VERSION: u32 = 7;
 
 /// Largest file that can be attached to an item.
 pub const MAX_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
@@ -71,32 +72,32 @@ impl EntryKind {
 
     pub fn label(self) -> &'static str {
         match self {
-            EntryKind::Login => "Login",
-            EntryKind::Email => "Email account",
-            EntryKind::SecureNote => "Secure note",
-            EntryKind::CreditCard => "Credit card",
-            EntryKind::Identity => "Identity",
-            EntryKind::ApiKey => "API key",
-            EntryKind::Server => "Server",
-            EntryKind::Database => "Database",
-            EntryKind::Wifi => "Wi-Fi",
-            EntryKind::Custom => "Custom",
+            EntryKind::Login => crate::i18n::tr("Login"),
+            EntryKind::Email => crate::i18n::tr("Email account"),
+            EntryKind::SecureNote => crate::i18n::tr("Secure note"),
+            EntryKind::CreditCard => crate::i18n::tr("Credit card"),
+            EntryKind::Identity => crate::i18n::tr("Identity"),
+            EntryKind::ApiKey => crate::i18n::tr("API key"),
+            EntryKind::Server => crate::i18n::tr("Server"),
+            EntryKind::Database => crate::i18n::tr("Database"),
+            EntryKind::Wifi => crate::i18n::tr("Wi-Fi"),
+            EntryKind::Custom => crate::i18n::tr("Custom"),
         }
     }
 
     /// Lower-case noun for use in sentences ("New API key").
     pub fn noun(self) -> &'static str {
         match self {
-            EntryKind::Login => "login",
-            EntryKind::Email => "email account",
-            EntryKind::SecureNote => "secure note",
-            EntryKind::CreditCard => "credit card",
-            EntryKind::Identity => "identity",
-            EntryKind::ApiKey => "API key",
-            EntryKind::Server => "server",
-            EntryKind::Database => "database",
-            EntryKind::Wifi => "Wi-Fi network",
-            EntryKind::Custom => "custom item",
+            EntryKind::Login => crate::i18n::tr("login"),
+            EntryKind::Email => crate::i18n::tr("email account"),
+            EntryKind::SecureNote => crate::i18n::tr("secure note"),
+            EntryKind::CreditCard => crate::i18n::tr("credit card"),
+            EntryKind::Identity => crate::i18n::tr("identity"),
+            EntryKind::ApiKey => crate::i18n::tr("API key"),
+            EntryKind::Server => crate::i18n::tr("server"),
+            EntryKind::Database => crate::i18n::tr("database"),
+            EntryKind::Wifi => crate::i18n::tr("Wi-Fi network"),
+            EntryKind::Custom => crate::i18n::tr("custom item"),
         }
     }
 
@@ -164,7 +165,10 @@ impl EntryKind {
             ],
             EntryKind::Custom => &[],
         };
-        spec.iter().map(|(l, k)| Field::new(l, *k)).collect()
+        // Field names are written in the interface language of the time.
+        spec.iter()
+            .map(|(l, k)| Field::new(crate::i18n::tr(l), *k))
+            .collect()
     }
 }
 
@@ -203,15 +207,15 @@ impl FieldKind {
 
     pub fn label(self) -> &'static str {
         match self {
-            FieldKind::Text => "Text",
-            FieldKind::Username => "Username",
-            FieldKind::Email => "Email",
-            FieldKind::Url => "URL",
-            FieldKind::Password => "Password",
-            FieldKind::Secret => "Hidden",
-            FieldKind::Note => "Multi-line",
-            FieldKind::SecretNote => "Hidden multi-line",
-            FieldKind::Totp => "One-time code",
+            FieldKind::Text => crate::i18n::tr("Text"),
+            FieldKind::Username => crate::i18n::tr("Username"),
+            FieldKind::Email => crate::i18n::tr("Email"),
+            FieldKind::Url => crate::i18n::tr("URL"),
+            FieldKind::Password => crate::i18n::tr("Password"),
+            FieldKind::Secret => crate::i18n::tr("Hidden"),
+            FieldKind::Note => crate::i18n::tr("Multi-line"),
+            FieldKind::SecretNote => crate::i18n::tr("Hidden multi-line"),
+            FieldKind::Totp => crate::i18n::tr("One-time code"),
         }
     }
 
@@ -291,6 +295,12 @@ pub struct Entry {
     pub auto_type: String,
     /// Files stored inside the vault. (Schema v6.)
     pub attachments: Vec<Attachment>,
+    /// Icon shown in lists, as a key from the UI's icon set ("" = the
+    /// item's first letter). (Schema v7.)
+    pub icon: String,
+    /// Tile colour, 1-based index into the UI's palette (0 = picked from the
+    /// website or title). (Schema v7.)
+    pub color: u8,
 }
 
 /// A file stored, encrypted, inside an item.
@@ -352,6 +362,8 @@ impl Entry {
             expires: 0,
             auto_type: String::new(),
             attachments: Vec::new(),
+            icon: String::new(),
+            color: 0,
         }
     }
 
@@ -363,7 +375,9 @@ impl Entry {
         }
         let f = self.fields.iter().find(|f| {
             let l = f.label.to_lowercase();
-            (l.contains("expir") || l.contains("valid")) && !f.value.trim().is_empty()
+            // "Expiry (MM/YY)" in English, "Λήξη (ΜΜ/ΕΕ)" in Greek.
+            (l.contains("expir") || l.contains("valid") || l.contains("λήξ"))
+                && !f.value.trim().is_empty()
         })?;
         let (m, y) = f.value.trim().split_once(['/', '-', ' '])?;
         let month: u32 = m.trim().parse().ok().filter(|m| (1..=12).contains(m))?;
@@ -429,7 +443,7 @@ impl Entry {
                 let number = self
                     .fields
                     .iter()
-                    .find(|f| f.label == "Card number")
+                    .find(|f| crate::i18n::is_any(&f.label, "Card number"))
                     .map(|f| f.value.as_str())
                     .unwrap_or("");
                 let digits: String = number.chars().filter(|c| c.is_ascii_digit()).collect();
@@ -461,7 +475,7 @@ impl Entry {
 
     pub fn display_title(&self) -> &str {
         if self.title.trim().is_empty() {
-            "(untitled)"
+            crate::i18n::tr("(untitled)")
         } else {
             &self.title
         }
@@ -587,20 +601,22 @@ pub enum AuditKind {
 impl AuditKind {
     pub fn label(self) -> &'static str {
         match self {
-            AuditKind::Unlocked => "Unlocked with the master password",
-            AuditKind::UnlockedWithHello => "Unlocked with Windows Hello",
-            AuditKind::Exported => "Exported as plain CSV",
-            AuditKind::Imported => "Imported items",
-            AuditKind::BackupCreated => "Backup created",
-            AuditKind::Restored => "Restored from a backup",
-            AuditKind::PasswordChanged => "Password changed",
-            AuditKind::CredentialsChanged => "Master password or key file changed",
-            AuditKind::DeletedForever => "Item deleted forever",
-            AuditKind::TrashEmptied => "Trash emptied",
-            AuditKind::HelloEnabled => "Windows Hello unlock turned on",
-            AuditKind::HelloDisabled => "Windows Hello unlock turned off",
-            AuditKind::AttachmentSaved => "Attachment saved to a file",
-            AuditKind::CaptureProtectionOff => "Screen-capture protection turned off",
+            AuditKind::Unlocked => crate::i18n::tr("Unlocked with the master password"),
+            AuditKind::UnlockedWithHello => crate::i18n::tr("Unlocked with Windows Hello"),
+            AuditKind::Exported => crate::i18n::tr("Exported as plain CSV"),
+            AuditKind::Imported => crate::i18n::tr("Imported items"),
+            AuditKind::BackupCreated => crate::i18n::tr("Backup created"),
+            AuditKind::Restored => crate::i18n::tr("Restored from a backup"),
+            AuditKind::PasswordChanged => crate::i18n::tr("Password changed"),
+            AuditKind::CredentialsChanged => crate::i18n::tr("Master password or key file changed"),
+            AuditKind::DeletedForever => crate::i18n::tr("Item deleted forever"),
+            AuditKind::TrashEmptied => crate::i18n::tr("Trash emptied"),
+            AuditKind::HelloEnabled => crate::i18n::tr("Windows Hello unlock turned on"),
+            AuditKind::HelloDisabled => crate::i18n::tr("Windows Hello unlock turned off"),
+            AuditKind::AttachmentSaved => crate::i18n::tr("Attachment saved to a file"),
+            AuditKind::CaptureProtectionOff => {
+                crate::i18n::tr("Screen-capture protection turned off")
+            }
         }
     }
 
@@ -650,10 +666,10 @@ impl SortOrder {
 
     pub fn label(self) -> &'static str {
         match self {
-            SortOrder::Name => "Name",
-            SortOrder::RecentlyUsed => "Recently used",
-            SortOrder::RecentlyModified => "Recently modified",
-            SortOrder::Created => "Newest first",
+            SortOrder::Name => crate::i18n::tr("Name"),
+            SortOrder::RecentlyUsed => crate::i18n::tr("Recently used"),
+            SortOrder::RecentlyModified => crate::i18n::tr("Recently modified"),
+            SortOrder::Created => crate::i18n::tr("Newest first"),
         }
     }
 
@@ -707,7 +723,22 @@ pub struct VaultSettings {
     /// Path of a local Have I Been Pwned SHA-1 list ("" = not set). Stored
     /// encrypted, like every other setting. (Schema v4.)
     pub breach_list: String,
+    /// Generator options remembered for particular websites. (Schema v7.)
+    pub site_rules: Vec<SiteRule>,
 }
+
+/// Password requirements of one website ("at most 16 characters, no
+/// symbols"), used instead of the default generator options for items on
+/// that site and its subdomains.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SiteRule {
+    /// Lower-case host without "www." ("example.com").
+    pub host: String,
+    pub options: GeneratorOptions,
+}
+
+/// Site rules kept per vault.
+pub const MAX_SITE_RULES: usize = 500;
 
 impl VaultSettings {
     pub const MIN_AUTO_LOCK_MINUTES: u32 = 1;
@@ -731,6 +762,70 @@ impl VaultSettings {
         self.auto_backup_count = self.auto_backup_count.min(Self::MAX_AUTO_BACKUPS);
         self.generator.sanitize();
         self.passphrase.sanitize();
+        let mut seen = std::collections::HashSet::new();
+        self.site_rules.retain_mut(|r| {
+            r.host = crate::autotype::url_host(&r.host);
+            r.options.sanitize();
+            !r.host.is_empty() && seen.insert(r.host.clone())
+        });
+        self.site_rules.truncate(MAX_SITE_RULES);
+    }
+
+    /// The rule for a website: the one for its host, or for the closest
+    /// parent domain ("example.com" covers "login.example.com").
+    pub fn site_rule(&self, url: &str) -> Option<&SiteRule> {
+        let host = crate::autotype::url_host(url);
+        if host.is_empty() {
+            return None;
+        }
+        self.site_rules
+            .iter()
+            .filter(|r| {
+                host == r.host
+                    || host
+                        .strip_suffix(r.host.as_str())
+                        .is_some_and(|p| p.ends_with('.'))
+            })
+            .max_by_key(|r| r.host.len())
+    }
+
+    /// The generator options for an item on `url` (the default options when
+    /// no rule matches).
+    pub fn generator_for(&self, url: Option<&str>) -> &GeneratorOptions {
+        url.and_then(|u| self.site_rule(u))
+            .map_or(&self.generator, |r| &r.options)
+    }
+
+    /// Remember `options` for the host of `url`, replacing an earlier rule
+    /// for the same host. Returns the host, or `None` if `url` has none (or
+    /// the vault already holds [`MAX_SITE_RULES`]).
+    pub fn set_site_rule(&mut self, url: &str, options: GeneratorOptions) -> Option<String> {
+        let host = crate::autotype::url_host(url);
+        if host.is_empty() {
+            return None;
+        }
+        let mut options = options;
+        options.sanitize();
+        match self.site_rules.iter_mut().find(|r| r.host == host) {
+            Some(r) => r.options = options,
+            None => {
+                if self.site_rules.len() >= MAX_SITE_RULES {
+                    return None;
+                }
+                self.site_rules.push(SiteRule {
+                    host: host.clone(),
+                    options,
+                });
+                self.site_rules.sort_by(|a, b| a.host.cmp(&b.host));
+            }
+        }
+        Some(host)
+    }
+
+    pub fn remove_site_rule(&mut self, host: &str) -> bool {
+        let before = self.site_rules.len();
+        self.site_rules.retain(|r| r.host != host);
+        self.site_rules.len() != before
     }
 }
 
@@ -748,6 +843,7 @@ impl Default for VaultSettings {
             auto_backup_count: 10,
             sort: SortOrder::Name,
             breach_list: String::new(),
+            site_rules: Vec::new(),
         }
     }
 }
@@ -789,6 +885,8 @@ pub(crate) mod v3 {
                 expires: 0,
                 auto_type: String::new(),
                 attachments: Vec::new(),
+                icon: String::new(),
+                color: 0,
             }
         }
     }
@@ -861,10 +959,63 @@ pub(crate) mod v3 {
     }
 }
 
-/// Schema v4 layouts. `VaultSettings` has not changed since v4; when it does,
-/// freeze a copy of the v4 layout here first.
+/// Schema v4 layouts. `VaultSettingsV4` is also the settings layout of
+/// schemas 5 and 6.
 pub(crate) mod v4 {
     use super::*;
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct VaultSettingsV4 {
+        pub auto_lock_minutes: u32,
+        pub clipboard_clear_secs: u32,
+        pub lock_on_minimize: bool,
+        pub generator: GeneratorOptions,
+        pub passphrase: PassphraseOptions,
+        pub hide_from_capture: bool,
+        pub reveal_timeout_secs: u32,
+        pub lock_on_session_lock: bool,
+        pub auto_backup_count: u32,
+        pub sort: SortOrder,
+        pub breach_list: String,
+    }
+
+    impl Default for VaultSettingsV4 {
+        fn default() -> Self {
+            let d = VaultSettings::default();
+            VaultSettingsV4 {
+                auto_lock_minutes: d.auto_lock_minutes,
+                clipboard_clear_secs: d.clipboard_clear_secs,
+                lock_on_minimize: d.lock_on_minimize,
+                generator: d.generator,
+                passphrase: d.passphrase,
+                hide_from_capture: d.hide_from_capture,
+                reveal_timeout_secs: d.reveal_timeout_secs,
+                lock_on_session_lock: d.lock_on_session_lock,
+                auto_backup_count: d.auto_backup_count,
+                sort: d.sort,
+                breach_list: d.breach_list,
+            }
+        }
+    }
+
+    impl VaultSettingsV4 {
+        pub fn upgrade(&self) -> VaultSettings {
+            VaultSettings {
+                auto_lock_minutes: self.auto_lock_minutes,
+                clipboard_clear_secs: self.clipboard_clear_secs,
+                lock_on_minimize: self.lock_on_minimize,
+                generator: self.generator.clone(),
+                passphrase: self.passphrase.clone(),
+                hide_from_capture: self.hide_from_capture,
+                reveal_timeout_secs: self.reveal_timeout_secs,
+                lock_on_session_lock: self.lock_on_session_lock,
+                auto_backup_count: self.auto_backup_count,
+                sort: self.sort,
+                breach_list: self.breach_list.clone(),
+                site_rules: Vec::new(),
+            }
+        }
+    }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
     pub struct EntryV4 {
@@ -901,6 +1052,8 @@ pub(crate) mod v4 {
                 expires: 0,
                 auto_type: String::new(),
                 attachments: Vec::new(),
+                icon: String::new(),
+                color: 0,
             }
         }
     }
@@ -918,7 +1071,7 @@ pub(crate) mod v4 {
         pub created: i64,
         pub entries: Vec<EntryV4>,
         #[zeroize(skip)]
-        pub settings: VaultSettings,
+        pub settings: VaultSettingsV4,
         pub last_backup: i64,
         pub trash: Vec<TrashedEntryV4>,
     }
@@ -930,7 +1083,7 @@ pub(crate) mod v4 {
                 name: self.name.clone(),
                 created: self.created,
                 entries: self.entries.iter().map(EntryV4::upgrade).collect(),
-                settings: self.settings.clone(),
+                settings: self.settings.upgrade(),
                 last_backup: self.last_backup,
                 trash: self
                     .trash
@@ -946,8 +1099,9 @@ pub(crate) mod v4 {
     }
 }
 
-/// Schema v5 layout (current minus attachments).
+/// Schema v5 layout (v6 minus attachments).
 pub(crate) mod v5 {
+    use super::v4::VaultSettingsV4;
     use super::*;
 
     #[derive(Deserialize, Serialize, Zeroize, ZeroizeOnDrop)]
@@ -987,6 +1141,8 @@ pub(crate) mod v5 {
                 expires: self.expires,
                 auto_type: self.auto_type.clone(),
                 attachments: Vec::new(),
+                icon: String::new(),
+                color: 0,
             }
         }
     }
@@ -997,8 +1153,6 @@ pub(crate) mod v5 {
         pub deleted: i64,
     }
 
-    /// Uses the current [`VaultSettings`]; freeze a copy here when that
-    /// layout changes.
     #[derive(Deserialize, Serialize, Zeroize, ZeroizeOnDrop)]
     pub struct VaultDataV5 {
         pub schema: u32,
@@ -1006,7 +1160,7 @@ pub(crate) mod v5 {
         pub created: i64,
         pub entries: Vec<EntryV5>,
         #[zeroize(skip)]
-        pub settings: VaultSettings,
+        pub settings: VaultSettingsV4,
         pub last_backup: i64,
         pub trash: Vec<TrashedEntryV5>,
         pub audit: Vec<AuditEvent>,
@@ -1019,7 +1173,98 @@ pub(crate) mod v5 {
                 name: self.name.clone(),
                 created: self.created,
                 entries: self.entries.iter().map(EntryV5::upgrade).collect(),
-                settings: self.settings.clone(),
+                settings: self.settings.upgrade(),
+                last_backup: self.last_backup,
+                trash: self
+                    .trash
+                    .iter()
+                    .map(|t| TrashedEntry {
+                        entry: t.entry.upgrade(),
+                        deleted: t.deleted,
+                    })
+                    .collect(),
+                audit: self.audit.clone(),
+            }
+        }
+    }
+}
+
+/// Schema v6 layout (current minus entry icons and site rules).
+pub(crate) mod v6 {
+    use super::v4::VaultSettingsV4;
+    use super::*;
+
+    #[derive(Deserialize, Serialize, Zeroize, ZeroizeOnDrop)]
+    pub struct EntryV6 {
+        pub id: u64,
+        #[zeroize(skip)]
+        pub kind: EntryKind,
+        pub title: String,
+        pub fields: Vec<Field>,
+        pub notes: String,
+        pub favorite: bool,
+        pub created: i64,
+        pub modified: i64,
+        pub password_changed: i64,
+        pub tags: Vec<String>,
+        pub history: Vec<HistoryItem>,
+        pub last_used: i64,
+        pub expires: i64,
+        pub auto_type: String,
+        pub attachments: Vec<Attachment>,
+    }
+
+    impl EntryV6 {
+        pub fn upgrade(&self) -> Entry {
+            Entry {
+                id: self.id,
+                kind: self.kind,
+                title: self.title.clone(),
+                fields: self.fields.clone(),
+                notes: self.notes.clone(),
+                favorite: self.favorite,
+                created: self.created,
+                modified: self.modified,
+                password_changed: self.password_changed,
+                tags: self.tags.clone(),
+                history: self.history.clone(),
+                last_used: self.last_used,
+                expires: self.expires,
+                auto_type: self.auto_type.clone(),
+                attachments: self.attachments.clone(),
+                icon: String::new(),
+                color: 0,
+            }
+        }
+    }
+
+    #[derive(Deserialize, Serialize, Zeroize, ZeroizeOnDrop)]
+    pub struct TrashedEntryV6 {
+        pub entry: EntryV6,
+        pub deleted: i64,
+    }
+
+    #[derive(Deserialize, Serialize, Zeroize, ZeroizeOnDrop)]
+    pub struct VaultDataV6 {
+        pub schema: u32,
+        pub name: String,
+        pub created: i64,
+        pub entries: Vec<EntryV6>,
+        #[zeroize(skip)]
+        pub settings: VaultSettingsV4,
+        pub last_backup: i64,
+        pub trash: Vec<TrashedEntryV6>,
+        pub audit: Vec<AuditEvent>,
+    }
+
+    impl VaultDataV6 {
+        pub fn upgrade(&self) -> VaultData {
+            VaultData {
+                schema: SCHEMA_VERSION,
+                name: self.name.clone(),
+                created: self.created,
+                entries: self.entries.iter().map(EntryV6::upgrade).collect(),
+                settings: self.settings.upgrade(),
                 last_backup: self.last_backup,
                 trash: self
                     .trash
@@ -1209,16 +1454,21 @@ impl VaultData {
 
     /// Put a trashed entry back.
     pub fn restore_entry(&mut self, id: u64) -> bool {
-        let Some(pos) = self.trash.iter().position(|t| t.entry.id == id) else {
-            return false;
-        };
+        self.restore_entry_id(id).is_some()
+    }
+
+    /// Put a trashed entry back, returning its id in the vault (a new one if
+    /// its old id has been taken meanwhile).
+    pub fn restore_entry_id(&mut self, id: u64) -> Option<u64> {
+        let pos = self.trash.iter().position(|t| t.entry.id == id)?;
         let t = self.trash.remove(pos);
         let mut entry = t.entry.clone();
         if self.entry(entry.id).is_some() {
             entry.id = new_id();
         }
+        let id = entry.id;
         self.entries.push(entry);
-        true
+        Some(id)
     }
 
     /// Delete a trashed entry for good.
@@ -1539,6 +1789,35 @@ mod tests {
         assert_eq!(v.find_duplicate(&same), Some((id, false)));
         same.fields[1].value = "bob".into();
         assert_eq!(v.find_duplicate(&same), None);
+    }
+
+    #[test]
+    fn site_rules_cover_subdomains_and_prefer_the_closest() {
+        let mut s = VaultSettings::default();
+        let short = GeneratorOptions {
+            length: 12,
+            ..Default::default()
+        };
+        let digits = GeneratorOptions {
+            length: 6,
+            ..Default::default()
+        };
+        assert_eq!(
+            s.set_site_rule("https://www.Example.com/login", short.clone()),
+            Some("example.com".into())
+        );
+        s.set_site_rule("bank.example.com", digits.clone());
+        assert_eq!(s.generator_for(Some("https://example.com")), &short);
+        assert_eq!(s.generator_for(Some("https://mail.example.com")), &short);
+        assert_eq!(s.generator_for(Some("https://x.bank.example.com")), &digits);
+        assert_eq!(
+            s.generator_for(Some("https://notexample.com")),
+            &s.generator
+        );
+        assert_eq!(s.generator_for(None), &s.generator);
+        assert_eq!(s.set_site_rule("", short), None);
+        assert!(s.remove_site_rule("example.com"));
+        assert_eq!(s.generator_for(Some("https://example.com")), &s.generator);
     }
 
     #[test]

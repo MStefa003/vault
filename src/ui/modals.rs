@@ -15,12 +15,14 @@ use super::widgets;
 use super::{Services, Transition};
 use crate::error::VaultError;
 use crate::format::VaultFile;
+use crate::i18n::tr;
 use crate::import_export::{export_csv, ImportResult};
 use crate::kdbx::{import_kdbx, KdbxError};
 use crate::model::{AuditKind, Entry, FieldKind};
 use crate::storage::{self, with_vault_extension, WriteMode};
 use crate::timeutil::now_unix;
 use crate::totp::Totp;
+use crate::trf;
 use crate::vault::{restore_backup_with, Credentials, UnlockedVault};
 
 pub struct RestoreState {
@@ -70,12 +72,12 @@ pub enum ReauthAction {
 impl ReauthAction {
     fn describe(self) -> &'static str {
         match self {
-            ReauthAction::Export => "Exporting writes every secret to an unencrypted file.",
+            ReauthAction::Export => tr("Exporting writes every secret to an unencrypted file."),
             ReauthAction::DisableCaptureProtection => {
-                "Screenshots and screen sharing will be able to show this window."
+                tr("Screenshots and screen sharing will be able to show this window.")
             }
             ReauthAction::EnableHello => {
-                "Windows Hello will be able to unlock this vault on this computer."
+                tr("Windows Hello will be able to unlock this vault on this computer.")
             }
         }
     }
@@ -191,6 +193,30 @@ pub enum Modal {
     QuickOpen(QuickOpenState),
     /// Pick the item to type into another application's window.
     AutoType(AutoTypeState),
+    /// Password rules for one website.
+    SiteRule(SiteRuleState),
+}
+
+pub struct SiteRuleState {
+    host: String,
+    options: crate::generator::GeneratorOptions,
+    /// A rule for exactly this host is already saved.
+    existing: bool,
+    /// An example password for the current options.
+    sample: Zeroizing<String>,
+    sample_for: Option<crate::generator::GeneratorOptions>,
+}
+
+impl SiteRuleState {
+    pub fn new(host: String, options: crate::generator::GeneratorOptions, existing: bool) -> Self {
+        SiteRuleState {
+            host,
+            options,
+            existing,
+            sample: Zeroizing::new(String::new()),
+            sample_for: None,
+        }
+    }
 }
 
 impl Modal {
@@ -231,6 +257,7 @@ pub fn show(ctx: &egui::Context, ms: &mut MainState, svc: &mut Services) -> Opti
         Modal::Restore(r) => restore(ctx, ms, svc, r, &mut transition),
         Modal::ExternalChange => external_change(ctx, ms, svc, &mut transition),
         Modal::DiscardEdits(nav) => discard_edits(ctx, ms, nav.clone()),
+        Modal::SiteRule(r) => site_rule(ctx, ms, svc, r),
     };
     // A handler may have opened a different dialog (e.g. a save conflict);
     // that one takes precedence.
@@ -265,7 +292,7 @@ fn confirm(
             if yes.clicked() {
                 decision = Some(true);
             }
-            if widgets::secondary_button(ui, "Cancel").clicked() {
+            if widgets::secondary_button(ui, tr("Cancel")).clicked() {
                 decision = Some(false);
             }
         });
@@ -285,20 +312,20 @@ fn purge_entry(ctx: &egui::Context, ms: &mut MainState, svc: &mut Services, id: 
     match confirm(
         ctx,
         "modal_purge",
-        "Delete forever?",
+        tr("Delete forever?"),
         |ui| {
-            ui.label(dim(format!(
-                "“{title}” will be removed from the vault. This can't be undone (older backups still contain it)."
+            ui.label(dim(trf!(
+                "“{title}” will be removed from the vault. This can't be undone (older backups still contain it).", title
             )));
         },
-        "Delete forever",
+        tr("Delete forever"),
         true,
     ) {
         Some(true) => {
             ms.vault.data_mut().purge_entry(id);
             ms.vault.data_mut().log(AuditKind::DeletedForever, &title);
             if ms.commit(svc.toasts) {
-                svc.toasts.success("Deleted");
+                svc.toasts.success(tr("Deleted"));
             }
             Outcome::Close
         }
@@ -312,14 +339,15 @@ fn empty_trash(ctx: &egui::Context, ms: &mut MainState, svc: &mut Services) -> O
     match confirm(
         ctx,
         "modal_empty_trash",
-        "Empty the Trash?",
+        tr("Empty the Trash?"),
         |ui| {
-            ui.label(dim(format!(
-                "{n} item{} will be removed from the vault. This can't be undone.",
-                if n == 1 { "" } else { "s" }
+            ui.label(dim(crate::i18n::plural(
+                n,
+                tr("{n} item will be removed from the vault. This can't be undone."),
+                tr("{n} items will be removed from the vault. This can't be undone."),
             )));
         },
-        "Empty Trash",
+        tr("Empty Trash"),
         true,
     ) {
         Some(true) => {
@@ -328,7 +356,7 @@ fn empty_trash(ctx: &egui::Context, ms: &mut MainState, svc: &mut Services) -> O
                 .data_mut()
                 .log(AuditKind::TrashEmptied, &format!("{n} items"));
             if ms.commit(svc.toasts) {
-                svc.toasts.success("Trash emptied");
+                svc.toasts.success(tr("Trash emptied"));
             }
             Outcome::Close
         }
@@ -362,7 +390,7 @@ fn reauth(
                         ms.vault.data_mut().settings.hide_from_capture = false;
                         ms.vault.data_mut().log(AuditKind::CaptureProtectionOff, "");
                         ms.commit(svc.toasts);
-                        svc.toasts.info("Screen-capture protection is off");
+                        svc.toasts.info(tr("Screen-capture protection is off"));
                     }
                 }
                 return Outcome::Close;
@@ -370,11 +398,11 @@ fn reauth(
             Poll::Done(false) => {
                 r.job = None;
                 r.focus_pending = true;
-                r.error = Some("That's not the master password.".into());
+                r.error = Some(tr("That's not the master password.").into());
             }
             Poll::Failed => {
                 r.job = None;
-                r.error = Some("The check failed unexpectedly.".into());
+                r.error = Some(tr("The check failed unexpectedly.").into());
             }
         }
     }
@@ -382,11 +410,11 @@ fn reauth(
     let mut decision = None;
     let resp = egui::Modal::new(Id::new("modal_reauth")).show(ctx, |ui| {
         ui.set_width(420.0);
-        ui.label(strong("Confirm it's you", 16.0));
+        ui.label(strong(tr("Confirm it's you"), 16.0));
         ui.add_space(4.0);
         ui.label(dim(r.action.describe()));
         ui.add_space(8.0);
-        ui.label(small("Master password"));
+        ui.label(small(tr("Master password")));
         let input = ui
             .add_enabled_ui(!busy, |ui| {
                 widgets::password_input(ui, &mut r.password, &mut r.reveal, "")
@@ -404,16 +432,17 @@ fn reauth(
         if busy {
             ui.horizontal(|ui| {
                 ui.add(egui::Spinner::new());
-                ui.label(dim("Checking…"));
+                ui.label(dim(tr("Checking…")));
             });
         } else {
             ui.horizontal(|ui| {
-                if widgets::primary_button_enabled(ui, "Continue", !r.password.is_empty()).clicked()
+                if widgets::primary_button_enabled(ui, tr("Continue"), !r.password.is_empty())
+                    .clicked()
                     || (enter && !r.password.is_empty())
                 {
                     decision = Some(true);
                 }
-                if widgets::secondary_button(ui, "Cancel").clicked() {
+                if widgets::secondary_button(ui, tr("Cancel")).clicked() {
                     decision = Some(false);
                 }
             });
@@ -440,7 +469,7 @@ fn kdbx_import(ctx: &egui::Context, ms: &mut MainState, k: &mut KdbxImportState)
             Poll::Done(Ok(result)) => {
                 k.job = None;
                 if result.entries.is_empty() {
-                    k.error = Some("No items found in that database.".into());
+                    k.error = Some(tr("No items found in that database.").into());
                 } else {
                     ms.modal = Some(Modal::ImportPreview {
                         source: k.source.clone(),
@@ -456,7 +485,7 @@ fn kdbx_import(ctx: &egui::Context, ms: &mut MainState, k: &mut KdbxImportState)
             }
             Poll::Failed => {
                 k.job = None;
-                k.error = Some("Reading the database failed unexpectedly.".into());
+                k.error = Some(tr("Reading the database failed unexpectedly.").into());
             }
         }
     }
@@ -469,20 +498,20 @@ fn kdbx_import(ctx: &egui::Context, ms: &mut MainState, k: &mut KdbxImportState)
     let mut decision = None;
     let resp = egui::Modal::new(Id::new("modal_kdbx")).show(ctx, |ui| {
         ui.set_width(440.0);
-        ui.label(strong("Import KeePass database", 16.0));
+        ui.label(strong(tr("Import KeePass database"), 16.0));
         ui.add_space(4.0);
         ui.add(egui::Label::new(faint(&file)).truncate());
         ui.add_space(8.0);
-        ui.label(small("Database password"));
+        ui.label(small(tr("Database password")));
         let input = ui
             .add_enabled_ui(!busy, |ui| {
                 widgets::password_input(ui, &mut k.password, &mut k.reveal, "")
             })
             .inner;
         let enter = input.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-        ui.label(faint(
+        ui.label(faint(tr(
             "Decrypted on this computer only. Attachments are not imported.",
-        ));
+        )));
         if let Some(e) = &k.error {
             ui.add_space(4.0);
             widgets::error_text(ui, e);
@@ -491,14 +520,14 @@ fn kdbx_import(ctx: &egui::Context, ms: &mut MainState, k: &mut KdbxImportState)
         if busy {
             ui.horizontal(|ui| {
                 ui.add(egui::Spinner::new());
-                ui.label(dim("Decrypting…"));
+                ui.label(dim(tr("Decrypting…")));
             });
         } else {
             ui.horizontal(|ui| {
-                if widgets::primary_button(ui, "Open").clicked() || enter {
+                if widgets::primary_button(ui, tr("Open")).clicked() || enter {
                     decision = Some(true);
                 }
-                if widgets::secondary_button(ui, "Cancel").clicked() {
+                if widgets::secondary_button(ui, tr("Cancel")).clicked() {
                     decision = Some(false);
                 }
             });
@@ -603,10 +632,10 @@ fn auto_type(
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.label(RichText::new(icons::KEYBOARD).size(16.0).color(text_dim()));
-            ui.label(faint("Type into"));
+            ui.label(faint(tr("Type into")));
         });
         let title = if a.target.title.trim().is_empty() {
-            "(untitled window)".to_string()
+            tr("(untitled window)").to_string()
         } else {
             a.target.title.clone()
         };
@@ -614,7 +643,7 @@ fn auto_type(
         ui.add_space(8.0);
         let resp = ui.add(
             egui::TextEdit::singleline(&mut a.query)
-                .hint_text(hint(format!(
+                .hint_text(hint(trf!(
                     "{}  Search for another item",
                     icons::MAGNIFYING_GLASS
                 )))
@@ -631,16 +660,16 @@ fn auto_type(
         ui.add_space(6.0);
         if query.is_empty() {
             ui.label(faint(if matched > 0 {
-                "Matching this window"
+                tr("Matching this window")
             } else {
-                "No item matches this window — recently used"
+                tr("No item matches this window — recently used")
             }));
             ui.add_space(2.0);
         }
         let data = ms.vault.data();
         if ids.is_empty() {
             ui.add_space(8.0);
-            ui.label(dim("No matches."));
+            ui.label(dim(tr("No matches.")));
             ui.add_space(8.0);
         }
         for (i, id) in ids.iter().enumerate() {
@@ -683,10 +712,10 @@ fn auto_type(
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 14.0;
             for hint in [
-                "Enter  username + password",
-                "Shift+Enter  password",
-                "Ctrl+Enter  one-time code",
-                "Esc  cancel",
+                tr("Enter  username + password"),
+                tr("Shift+Enter  password"),
+                tr("Ctrl+Enter  one-time code"),
+                tr("Esc  cancel"),
             ] {
                 ui.label(faint(hint));
             }
@@ -794,10 +823,7 @@ fn quick_open(
         ui.set_width(560.0);
         let resp = ui.add(
             egui::TextEdit::singleline(&mut q.query)
-                .hint_text(hint(format!(
-                    "{}  Search the vault",
-                    icons::MAGNIFYING_GLASS
-                )))
+                .hint_text(hint(trf!("{}  Search the vault", icons::MAGNIFYING_GLASS)))
                 .font(FontId::proportional(16.0))
                 .desired_width(f32::INFINITY)
                 .margin(Vec2::new(12.0, 10.0)),
@@ -813,7 +839,7 @@ fn quick_open(
         let data = ms.vault.data();
         if ids.is_empty() {
             ui.add_space(8.0);
-            ui.label(dim("No matches."));
+            ui.label(dim(tr("No matches.")));
             ui.add_space(8.0);
         }
         for (i, id) in ids.iter().enumerate() {
@@ -856,11 +882,11 @@ fn quick_open(
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 14.0;
             for hint in [
-                "Enter  copy password",
-                "Shift+Enter  username",
-                "Ctrl+Enter  one-time code",
-                "Ctrl+O  open",
-                "Esc  close",
+                tr("Enter  copy password"),
+                tr("Shift+Enter  username"),
+                tr("Ctrl+Enter  one-time code"),
+                tr("Ctrl+O  open"),
+                tr("Esc  close"),
             ] {
                 ui.label(faint(hint));
             }
@@ -884,19 +910,19 @@ fn quick_open(
             Want::Password => (
                 e.first_of(FieldKind::Password)
                     .map(|v| Zeroizing::new(v.to_string())),
-                "Password",
+                tr("Password"),
             ),
             Want::Username => (
                 e.first_of(FieldKind::Username)
                     .or_else(|| e.first_of(FieldKind::Email))
                     .map(|v| Zeroizing::new(v.to_string())),
-                "Username",
+                tr("Username"),
             ),
             Want::Code => (
                 e.totp_secret()
                     .and_then(|s| Totp::parse(s).ok())
                     .map(|t| Zeroizing::new(t.code_at(now_unix()))),
-                "One-time code",
+                tr("One-time code"),
             ),
             Want::Open => (None, ""),
         }
@@ -918,21 +944,155 @@ fn quick_open(
         }
         None => {
             svc.toasts
-                .info(format!("This item has no {}", what.to_lowercase()));
+                .info(trf!("This item has no {}", what.to_lowercase()));
             Outcome::Keep
         }
     }
+}
+
+/// Length and character sets the generator uses for one website, for sites
+/// that refuse long passwords or certain symbols.
+fn site_rule(
+    ctx: &egui::Context,
+    ms: &mut MainState,
+    svc: &mut Services,
+    r: &mut SiteRuleState,
+) -> Outcome {
+    use crate::generator::{generate_password, MAX_LENGTH, MIN_LENGTH};
+    let mut outcome = Outcome::Keep;
+    let g = &mut r.options;
+    let resp = egui::Modal::new(Id::new("modal_site_rule")).show(ctx, |ui| {
+        ui.set_width(440.0);
+        ui.label(strong(trf!("Password rules for {}", r.host), 16.0));
+        ui.add_space(4.0);
+        ui.label(dim(tr(
+            "Used whenever VaultRust generates a password for this site or its subdomains. \
+             Match what the site's sign-up page allows.",
+        )));
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            ui.label(small(tr("Length")));
+            ui.add_sized(
+                [56.0, 26.0],
+                egui::DragValue::new(&mut g.length).range(MIN_LENGTH..=MAX_LENGTH),
+            );
+            ui.spacing_mut().slider_width = 240.0;
+            widgets::slider(
+                ui,
+                egui::Slider::new(&mut g.length, MIN_LENGTH..=64)
+                    .clamping(egui::SliderClamping::Never),
+            );
+        });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.label(small(tr("Characters")));
+            super::generator_page::chip(ui, &mut g.uppercase, "A–Z");
+            super::generator_page::chip(ui, &mut g.lowercase, "a–z");
+            super::generator_page::chip(ui, &mut g.digits, "0–9");
+            super::generator_page::chip(ui, &mut g.symbols, "!#$%&*");
+        });
+        ui.add_space(6.0);
+        widgets::switch_row(
+            ui,
+            &mut g.exclude_ambiguous,
+            tr("Avoid look-alike characters"),
+            crate::generator::AMBIGUOUS,
+        );
+        widgets::switch_row(
+            ui,
+            &mut g.require_each_class,
+            tr("Use every selected set at least once"),
+            "",
+        );
+        widgets::setting_row(
+            ui,
+            tr("Extra characters"),
+            tr("Symbols the site accepts, e.g. !@#"),
+            170.0,
+            |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut g.custom_chars)
+                        .desired_width(160.0)
+                        .font(egui::TextStyle::Monospace)
+                        .margin(Vec2::new(8.0, 5.0)),
+                );
+            },
+        );
+        widgets::switch_row(
+            ui,
+            &mut g.custom_only,
+            tr("Use only the extra characters"),
+            "",
+        );
+        g.sanitize();
+        if r.sample_for.as_ref() != Some(g) {
+            r.sample = generate_password(g).unwrap_or_else(|e| Zeroizing::new(format!("({e})")));
+            r.sample_for = Some(g.clone());
+        }
+        ui.add_space(8.0);
+        ui.label(faint(tr("Example")));
+        ui.add(
+            egui::Label::new(
+                RichText::new(r.sample.as_str())
+                    .family(egui::FontFamily::Monospace)
+                    .color(text()),
+            )
+            .wrap(),
+        );
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            let ok = generate_password(g).is_ok();
+            if widgets::primary_button_enabled(ui, tr("Save rules"), ok).clicked() {
+                let host = r.host.clone();
+                let saved = ms.vault.data_mut().settings.set_site_rule(&host, g.clone());
+                match saved {
+                    Some(host) => {
+                        if ms.commit(svc.toasts) {
+                            svc.toasts
+                                .success(trf!("Password rules saved for {host}", host));
+                        }
+                    }
+                    None => svc.toasts.error(trf!(
+                        "Couldn't save the rules: a vault holds at most {} site rules",
+                        crate::model::MAX_SITE_RULES
+                    )),
+                }
+                outcome = Outcome::Close;
+            }
+            if widgets::secondary_button(ui, tr("Cancel")).clicked() {
+                outcome = Outcome::Close;
+            }
+            if r.existing {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if widgets::link_button(ui, tr("Remove rules")).clicked() {
+                        if ms.vault.data_mut().settings.remove_site_rule(&r.host)
+                            && ms.commit(svc.toasts)
+                        {
+                            svc.toasts
+                                .info(trf!("{} uses the default generator settings again", r.host));
+                        }
+                        outcome = Outcome::Close;
+                    }
+                });
+            }
+        });
+    });
+    if resp.should_close() {
+        outcome = Outcome::Close;
+    }
+    outcome
 }
 
 fn discard_edits(ctx: &egui::Context, ms: &mut MainState, nav: Nav) -> Outcome {
     match confirm(
         ctx,
         "modal_discard",
-        "Discard changes?",
+        tr("Discard changes?"),
         |ui| {
-            ui.label(dim("Your edits to this item haven't been saved."));
+            ui.label(dim(tr("Your edits to this item haven't been saved.")));
         },
-        "Discard",
+        tr("Discard"),
         true,
     ) {
         Some(true) => {
@@ -954,25 +1114,25 @@ fn external_change(
     let mut choice = None;
     egui::Modal::new(Id::new("modal_external")).show(ctx, |ui| {
         ui.set_width(460.0);
-        ui.label(strong("The vault file changed on disk", 16.0));
+        ui.label(strong(tr("The vault file changed on disk"), 16.0));
         ui.add_space(6.0);
         ui.label(dim(
-            "Another VaultRust window, a sync tool or a restore modified the file after you opened \
-             it. Your latest change has not been saved yet.",
+            tr("Another VaultRust window, a sync tool or a restore modified the file after you opened \
+             it. Your latest change has not been saved yet."),
         ));
         ui.add_space(8.0);
         ui.label(small(
-            "Reload: lock and reopen the file from disk. Your unsaved change is lost.",
+            tr("Reload: lock and reopen the file from disk. Your unsaved change is lost."),
         ));
         ui.label(small(
-            "Keep mine: overwrite the file with this window's version. The other changes are lost.",
+            tr("Keep mine: overwrite the file with this window's version. The other changes are lost."),
         ));
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            if widgets::primary_button(ui, "Reload").clicked() {
+            if widgets::primary_button(ui, tr("Reload")).clicked() {
                 choice = Some(0);
             }
-            if widgets::danger_button(ui, "Keep mine").clicked() {
+            if widgets::danger_button(ui, tr("Keep mine")).clicked() {
                 choice = Some(1);
             }
         });
@@ -984,8 +1144,8 @@ fn external_change(
         }
         Some(_) => {
             match ms.vault.save_overwriting_external_changes() {
-                Ok(()) => svc.toasts.success("Saved your version"),
-                Err(e) => svc.toasts.error(format!("Couldn't save: {e}")),
+                Ok(()) => svc.toasts.success(tr("Saved your version")),
+                Err(e) => svc.toasts.error(trf!("Couldn't save: {e}", e)),
             }
             Outcome::Close
         }
@@ -1002,12 +1162,14 @@ fn confirm_backup_overwrite(
     match confirm(
         ctx,
         "modal_backup_overwrite",
-        "Replace existing file?",
+        tr("Replace existing file?"),
         |ui| {
             ui.add(egui::Label::new(dim(path.display().to_string())).wrap());
-            ui.label(dim("Its current contents will be replaced by this backup."));
+            ui.label(dim(tr(
+                "Its current contents will be replaced by this backup.",
+            )));
         },
-        "Replace",
+        tr("Replace"),
         true,
     ) {
         Some(true) => {
@@ -1062,10 +1224,10 @@ fn import_preview(
     let to_add = new + if *update_changed { 0 } else { changed };
     let to_update = if *update_changed { changed } else { 0 };
     let title = match (to_add, to_update) {
-        (0, 0) => "Nothing new to import".to_string(),
-        (a, 0) => format!("Import {a} item{}", if a == 1 { "" } else { "s" }),
-        (0, u) => format!("Update {u} item{}", if u == 1 { "" } else { "s" }),
-        (a, u) => format!("Import {a}, update {u}"),
+        (0, 0) => tr("Nothing new to import").to_string(),
+        (a, 0) => crate::i18n::plural(a, tr("Import {n} item"), tr("Import {n} items")),
+        (0, u) => crate::i18n::plural(u, tr("Update {n} item"), tr("Update {n} items")),
+        (a, u) => trf!("Import {a}, update {u}", a, u),
     };
     let entries = &result.entries;
     let mut decision = None;
@@ -1073,37 +1235,46 @@ fn import_preview(
         ui.set_width(480.0);
         ui.label(strong(&title, 16.0));
         ui.add_space(4.0);
-        let mut line = format!("From {file} ({format})");
+        let mut line = trf!("From {file} ({format})", file, format);
         if skipped_rows > 0 {
-            line.push_str(&format!(
-                " · {skipped_rows} empty or unreadable rows skipped"
+            line.push_str(&trf!(
+                " · {skipped_rows} empty or unreadable rows skipped",
+                skipped_rows
             ));
         }
         ui.label(dim(line));
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            widgets::pill(ui, &format!("{new} new"), accent());
+            widgets::pill(ui, &trf!("{new} new", new), accent());
             if identical > 0 {
-                widgets::pill(ui, &format!("{identical} already in the vault"), text_dim());
+                widgets::pill(
+                    ui,
+                    &trf!("{identical} already in the vault", identical),
+                    text_dim(),
+                );
             }
             if changed > 0 {
-                widgets::pill(ui, &format!("{changed} with a different password"), warn());
+                widgets::pill(
+                    ui,
+                    &trf!("{changed} with a different password", changed),
+                    warn(),
+                );
             }
         });
         if identical > 0 {
-            ui.label(faint(
+            ui.label(faint(tr(
                 "Items already in the vault with the same password are skipped.",
-            ));
+            )));
         }
         if changed > 0 {
             ui.add_space(4.0);
             ui.checkbox(
                 update_changed,
-                "Update their passwords (the current ones are kept in password history)",
+                tr("Update their passwords (the current ones are kept in password history)"),
             );
             if !*update_changed {
-                ui.label(faint("They will be added as separate items instead."));
+                ui.label(faint(tr("They will be added as separate items instead.")));
             }
         }
         ui.add_space(6.0);
@@ -1128,7 +1299,7 @@ fn import_preview(
                                         ImportFate::Changed(_) if *update_changed => {
                                             ("update", warn())
                                         }
-                                        ImportFate::Changed(_) => ("new copy", text_dim()),
+                                        ImportFate::Changed(_) => (tr("new copy"), text_dim()),
                                     };
                                     ui.label(RichText::new(text).size(12.0).color(color));
                                 },
@@ -1152,27 +1323,32 @@ fn import_preview(
                             );
                         }
                         if entries.len() > 200 {
-                            ui.label(faint(format!("and {} more", entries.len() - 200)));
+                            ui.label(faint(trf!("and {} more", entries.len() - 200)));
                         }
                     });
             });
         ui.add_space(8.0);
         widgets::warning_box(
             ui,
-            &format!(
+            &trf!(
                 "{file} is not encrypted. Delete it after importing and empty the Recycle Bin. \
-                 On SSDs, deleted data may still be recoverable."
+                 On SSDs, deleted data may still be recoverable.",
+                file
             ),
         );
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             let any = to_add + to_update > 0;
-            if widgets::primary_button_enabled(ui, if any { "Import" } else { "Close" }, true)
-                .clicked()
+            if widgets::primary_button_enabled(
+                ui,
+                if any { tr("Import") } else { tr("Close") },
+                true,
+            )
+            .clicked()
             {
                 decision = Some(any);
             }
-            if any && widgets::secondary_button(ui, "Cancel").clicked() {
+            if any && widgets::secondary_button(ui, tr("Cancel")).clicked() {
                 decision = Some(false);
             }
         });
@@ -1206,12 +1382,19 @@ fn import_preview(
             }
             d.log(
                 AuditKind::Imported,
-                &format!("{to_add} added, {to_update} updated from {file}"),
+                &trf!(
+                    "{to_add} added, {to_update} updated from {file}",
+                    to_add,
+                    to_update,
+                    file
+                ),
             );
             if ms.commit(svc.toasts) {
                 svc.toasts.success(match (to_add, to_update) {
-                    (a, 0) => format!("Imported {a} item{}", if a == 1 { "" } else { "s" }),
-                    (a, u) => format!("Imported {a}, updated {u}"),
+                    (a, 0) => {
+                        crate::i18n::plural(a, tr("Imported {n} item"), tr("Imported {n} items"))
+                    }
+                    (a, u) => trf!("Imported {a}, updated {u}", a, u),
                 });
             }
             Outcome::Close
@@ -1231,29 +1414,29 @@ fn export_warning(
     let mut decision = None;
     let resp = egui::Modal::new(Id::new("modal_export")).show(ctx, |ui| {
         ui.set_width(460.0);
-        ui.label(strong("Export as plain CSV", 16.0));
+        ui.label(strong(tr("Export as plain CSV"), 16.0));
         ui.add_space(6.0);
         widgets::danger_box(
             ui,
-            "This writes every password, card number, key and note in the vault to an unencrypted \
-             file. Any program or person that can read the file gets all of them.",
+            tr("This writes every password, card number, key and note in the vault to an unencrypted \
+             file. Any program or person that can read the file gets all of them."),
         );
         ui.add_space(6.0);
         ui.label(dim(
-            "For safekeeping use an encrypted backup instead. Only export to move to another \
-             password manager, and delete the file straight after.",
+            tr("For safekeeping use an encrypted backup instead. Only export to move to another \
+             password manager, and delete the file straight after."),
         ));
         ui.add_space(8.0);
-        ui.checkbox(understood, "I understand the risk");
-        ui.label(small("Type EXPORT to continue"));
+        ui.checkbox(understood, tr("I understand the risk"));
+        ui.label(small(tr("Type EXPORT to continue")));
         widgets::text_input(ui, typed, "");
         ui.add_space(12.0);
         let ok = *understood && typed.trim() == "EXPORT";
         ui.horizontal(|ui| {
-            if widgets::danger_button_enabled(ui, "Choose file…", ok).clicked() {
+            if widgets::danger_button_enabled(ui, tr("Choose file…"), ok).clicked() {
                 decision = Some(true);
             }
-            if widgets::secondary_button(ui, "Cancel").clicked() {
+            if widgets::secondary_button(ui, tr("Cancel")).clicked() {
                 decision = Some(false);
             }
         });
@@ -1261,7 +1444,7 @@ fn export_warning(
     match decision.or_else(|| resp.should_close().then_some(false)) {
         Some(true) => {
             let dlg = rfd::FileDialog::new()
-                .set_title("Save plain CSV export")
+                .set_title(tr("Save plain CSV export"))
                 .add_filter("CSV", &["csv"])
                 .set_file_name("vaultrust-export-UNENCRYPTED.csv");
             if let Some(path) = dlg.save_file() {
@@ -1275,12 +1458,12 @@ fn export_warning(
                             .unwrap_or_default();
                         ms.vault.data_mut().log(AuditKind::Exported, &name);
                         ms.commit(svc.toasts);
-                        svc.toasts.info(format!(
+                        svc.toasts.info(trf!(
                             "Exported to {} — delete it when you're done",
                             path.display()
                         ))
                     }
-                    Err(e) => svc.toasts.error(format!("Export failed: {e}")),
+                    Err(e) => svc.toasts.error(trf!("Export failed: {e}", e)),
                 }
             }
             Outcome::Close
@@ -1308,7 +1491,7 @@ fn restore(
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 v.data_mut().log(AuditKind::Restored, &name);
-                svc.toasts.success("Backup restored");
+                svc.toasts.success(tr("Backup restored"));
                 *transition = Some(Transition::Open(Box::new(v)));
                 return Outcome::Close;
             }
@@ -1316,15 +1499,17 @@ fn restore(
                 r.job = None;
                 r.error = Some(match e {
                     VaultError::WrongPasswordOrTampered if r.needs_key_file => {
-                        "Wrong password or key file for this backup.".into()
+                        tr("Wrong password or key file for this backup.").into()
                     }
-                    VaultError::WrongPasswordOrTampered => "Wrong password for this backup.".into(),
+                    VaultError::WrongPasswordOrTampered => {
+                        tr("Wrong password for this backup.").into()
+                    }
                     other => other.to_string(),
                 });
             }
             Poll::Failed => {
                 r.job = None;
-                r.error = Some("Restore failed unexpectedly.".into());
+                r.error = Some(tr("Restore failed unexpectedly.").into());
             }
         }
     }
@@ -1332,24 +1517,27 @@ fn restore(
     let mut decision = None;
     let resp = egui::Modal::new(Id::new("modal_restore")).show(ctx, |ui| {
         ui.set_width(460.0);
-        ui.label(strong("Restore backup", 16.0));
+        ui.label(strong(tr("Restore backup"), 16.0));
         ui.add_space(4.0);
         ui.add(egui::Label::new(faint(r.backup.display().to_string())).truncate());
         ui.add_space(8.0);
         ui.add_enabled_ui(!busy, |ui| {
-            ui.label(small("Master password of the backup"));
+            ui.label(small(tr("Master password of the backup")));
             widgets::password_input(ui, &mut r.password, &mut r.reveal, "");
             if r.needs_key_file {
                 ui.add_space(4.0);
-                ui.label(small("Key file of the backup"));
+                ui.label(small(tr("Key file of the backup")));
                 key_file_picker(ui, &mut r.key_file, false);
             }
             ui.add_space(6.0);
-            ui.radio_value(&mut r.replace_current, false, "Restore to a new file");
-            ui.radio_value(&mut r.replace_current, true, "Replace the open vault");
+            ui.radio_value(&mut r.replace_current, false, tr("Restore to a new file"));
+            ui.radio_value(&mut r.replace_current, true, tr("Replace the open vault"));
             if r.replace_current {
-                widgets::danger_box(ui, "Anything added since the backup was made will be lost.");
-                ui.checkbox(&mut r.understood, "Replace the open vault");
+                widgets::danger_box(
+                    ui,
+                    tr("Anything added since the backup was made will be lost."),
+                );
+                ui.checkbox(&mut r.understood, tr("Replace the open vault"));
             }
         });
         if let Some(e) = &r.error {
@@ -1360,17 +1548,17 @@ fn restore(
         if busy {
             ui.horizontal(|ui| {
                 ui.add(egui::Spinner::new());
-                ui.label(dim("Checking and restoring…"));
+                ui.label(dim(tr("Checking and restoring…")));
             });
         } else {
             ui.horizontal(|ui| {
                 let ok = !r.password.is_empty()
                     && (!r.replace_current || r.understood)
                     && (!r.needs_key_file || r.key_file.is_chosen());
-                if widgets::primary_button_enabled(ui, "Restore", ok).clicked() {
+                if widgets::primary_button_enabled(ui, tr("Restore"), ok).clicked() {
                     decision = Some(true);
                 }
-                if widgets::secondary_button(ui, "Cancel").clicked() {
+                if widgets::secondary_button(ui, tr("Cancel")).clicked() {
                     decision = Some(false);
                 }
             });
@@ -1387,8 +1575,8 @@ fn restore(
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "restored".into());
                 rfd::FileDialog::new()
-                    .set_title("Save restored vault as")
-                    .add_filter("VaultRust vault", &["vault"])
+                    .set_title(tr("Save restored vault as"))
+                    .add_filter(tr("VaultRust vault"), &["vault"])
                     .set_file_name(format!("{stem}-restored.vault"))
                     .save_file()
                     .map(with_vault_extension)
@@ -1397,7 +1585,7 @@ fn restore(
                 return Outcome::Keep;
             };
             if !r.replace_current && dest.exists() {
-                r.error = Some("That file already exists. Choose a new name.".into());
+                r.error = Some(tr("That file already exists. Choose a new name.").into());
                 return Outcome::Keep;
             }
             // Make sure nothing pending is written over the restored file.

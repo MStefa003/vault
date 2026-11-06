@@ -16,10 +16,12 @@ use super::{Services, Transition};
 use crate::analysis::estimate_strength;
 use crate::error::VaultError;
 use crate::format::FORMAT_VERSION;
+use crate::i18n::tr;
 use crate::import_export::{import_auto, read_import_file, ImportError};
 use crate::model::VaultSettings;
 use crate::storage::{self, with_vault_extension};
 use crate::timeutil::{age_description, now_unix};
+use crate::trf;
 use crate::vault::{Credentials, RewrappedHeader, MIN_MASTER_PASSWORD_CHARS};
 
 /// What a credentials change does with the key file.
@@ -91,7 +93,7 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) -> Option
         .id_salt("settings")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            widgets::page_header(ui, "Settings", "Stored inside the encrypted vault.");
+            widgets::page_header(ui, tr("Settings"), tr("Stored inside the encrypted vault."));
             vault_section(ui, ms, svc);
             ui.add_space(12.0);
             privacy_section(ui, ms, svc);
@@ -110,16 +112,16 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) -> Option
 }
 
 fn vault_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
-    section(ui, "Vault", |ui| {
+    section(ui, tr("Vault"), |ui| {
         let name = ms
             .settings
             .name_buf
             .get_or_insert_with(|| ms.vault.data().name.clone());
         let changed = *name != ms.vault.data().name;
         let mut rename = false;
-        widgets::setting_row(ui, "Name", "Shown in the sidebar", 380.0, |ui| {
+        widgets::setting_row(ui, tr("Name"), tr("Shown in the sidebar"), 380.0, |ui| {
             if changed {
-                rename = widgets::primary_button(ui, "Rename").clicked();
+                rename = widgets::primary_button(ui, tr("Rename")).clicked();
             }
             ui.add(
                 egui::TextEdit::singleline(name)
@@ -131,22 +133,22 @@ fn vault_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
             let n = name.clone();
             match ms.vault.rename(&n) {
                 Ok(()) => {
-                    svc.toasts.success("Renamed");
+                    svc.toasts.success(tr("Renamed"));
                     ms.settings.name_buf = None;
                 }
-                Err(e) => report(ms, svc, "Couldn't rename", e),
+                Err(e) => report(ms, svc, tr("Couldn't rename"), e),
             }
         }
         widgets::divider(ui, 16.0);
         let mut move_file = false;
         let path = widgets::short_path(ms.vault.path());
-        widgets::setting_row(ui, "File", &path, 120.0, |ui| {
-            move_file = widgets::secondary_button(ui, "Move…").clicked();
+        widgets::setting_row(ui, tr("File"), &path, 120.0, |ui| {
+            move_file = widgets::secondary_button(ui, tr("Move…")).clicked();
         });
         if move_file {
             let mut dlg = rfd::FileDialog::new()
-                .set_title("Move vault file")
-                .add_filter("VaultRust vault", &["vault"]);
+                .set_title(tr("Move vault file"))
+                .add_filter(tr("VaultRust vault"), &["vault"]);
             if let Some(n) = ms.vault.path().file_name() {
                 dlg = dlg.set_file_name(n.to_string_lossy());
             }
@@ -158,12 +160,12 @@ fn vault_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
                 match ms.vault.move_to(&dest) {
                     Ok(()) => {
                         svc.recent.push(&dest);
-                        svc.toasts.success("Vault file moved");
+                        svc.toasts.success(tr("Vault file moved"));
                     }
                     Err(VaultError::AlreadyExists) => svc
                         .toasts
-                        .error("A file with that name already exists there. Moving never overwrites files."),
-                    Err(e) => report(ms, svc, "Couldn't move the vault", e),
+                        .error(tr("A file with that name already exists there. Moving never overwrites files.")),
+                    Err(e) => report(ms, svc, tr("Couldn't move the vault"), e),
                 }
             }
         }
@@ -173,23 +175,23 @@ fn vault_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
             .num_columns(2)
             .spacing([24.0, 4.0])
             .show(ui, |ui| {
-                ui.label(faint("Encryption"));
-                ui.label(small("XChaCha20-Poly1305, 256-bit key"));
+                ui.label(faint(tr("Encryption")));
+                ui.label(small(tr("XChaCha20-Poly1305, 256-bit key")));
                 ui.end_row();
-                ui.label(faint("Key derivation"));
+                ui.label(faint(tr("Key derivation")));
                 ui.label(small(ms.vault.kdf_params().describe()));
                 ui.end_row();
-                ui.label(faint("Unlocks with"));
+                ui.label(faint(tr("Unlocks with")));
                 ui.label(small(if ms.vault.uses_key_file() {
-                    "Master password + key file"
+                    tr("Master password + key file")
                 } else {
-                    "Master password"
+                    tr("Master password")
                 }));
                 ui.end_row();
-                ui.label(faint("File format"));
-                ui.label(small(format!("Version {FORMAT_VERSION}")));
+                ui.label(faint(tr("File format")));
+                ui.label(small(trf!("Version {FORMAT_VERSION}", FORMAT_VERSION)));
                 ui.end_row();
-                ui.label(faint("Vault ID"));
+                ui.label(faint(tr("Vault ID")));
                 ui.label(
                     RichText::new(ms.vault.vault_id_hex())
                         .family(egui::FontFamily::Monospace)
@@ -206,11 +208,11 @@ fn hello_row(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
     if !crate::hello::is_available() {
         widgets::setting_row(
             ui,
-            "Unlock with Windows Hello",
-            "Set up a fingerprint, face or PIN in Windows Settings › Accounts › Sign-in options",
+            tr("Unlock with Windows Hello"),
+            tr("Set up a fingerprint, face or PIN in Windows Settings › Accounts › Sign-in options"),
             100.0,
             |ui| {
-                ui.label(faint("Unavailable"));
+                ui.label(faint(tr("Unavailable")));
             },
         );
         return;
@@ -218,19 +220,20 @@ fn hello_row(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
     let on = ms.hello_enabled();
     let busy = ms.hello_job.is_some();
     let desc = if on {
-        "On · the master password is still needed the first time after VaultRust starts"
+        tr("On · the master password is still needed the first time after VaultRust starts")
     } else {
-        "Fingerprint, face or PIN instead of typing the master password every time"
+        tr("Fingerprint, face or PIN instead of typing the master password every time")
     };
     let (mut turn_on, mut turn_off) = (false, false);
-    widgets::setting_row(ui, "Unlock with Windows Hello", desc, 160.0, |ui| {
+    widgets::setting_row(ui, tr("Unlock with Windows Hello"), desc, 160.0, |ui| {
         if busy {
             ui.add(egui::Spinner::new());
         } else if on {
-            turn_off = widgets::secondary_button(ui, "Turn off").clicked();
+            turn_off = widgets::secondary_button(ui, tr("Turn off")).clicked();
         } else {
-            turn_on = widgets::secondary_button(ui, &icons::with(icons::FINGERPRINT, "Turn on…"))
-                .clicked();
+            turn_on =
+                widgets::secondary_button(ui, &icons::with(icons::FINGERPRINT, tr("Turn on…")))
+                    .clicked();
         }
     });
     if turn_on {
@@ -253,32 +256,34 @@ fn startup_row(ui: &mut egui::Ui, svc: &mut Services) {
     };
     let mut on = status != Autostart::Off;
     let desc = match &status {
-        Autostart::OtherCopy(cmd) => format!(
+        Autostart::OtherCopy(cmd) => trf!(
             "Starts a different copy of VaultRust: {}. Turn off and on again to use this one.",
             cmd
         ),
         _ if svc.tray && svc.prefs.close_to_tray => {
-            "Waits in the notification area after you sign in, locked".to_string()
+            tr("Waits in the notification area after you sign in, locked").to_string()
         }
-        _ => "Opens VaultRust minimized after you sign in, locked".to_string(),
+        _ => tr("Opens VaultRust minimized after you sign in, locked").to_string(),
     };
-    widgets::switch_row(ui, &mut on, "Start with Windows", &desc);
+    widgets::switch_row(ui, &mut on, tr("Start with Windows"), &desc);
     if on != (status != Autostart::Off) && !cfg!(test) {
         match crate::os_protect::set_autostart(on) {
-            Ok(()) if on => svc.toasts.success("VaultRust will start when you sign in"),
-            Ok(()) => svc.toasts.info("VaultRust won't start with Windows"),
-            Err(e) => svc.toasts.error(format!("Couldn't change start-up: {e}")),
+            Ok(()) if on => svc
+                .toasts
+                .success(tr("VaultRust will start when you sign in")),
+            Ok(()) => svc.toasts.info(tr("VaultRust won't start with Windows")),
+            Err(e) => svc.toasts.error(trf!("Couldn't change start-up: {e}", e)),
         }
     }
 }
 
 fn privacy_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
-    section(ui, "Locking & privacy", |ui| {
+    section(ui, tr("Locking & privacy"), |ui| {
         let mut s = ms.vault.data().settings.clone();
         timed_row(
             ui,
-            "Lock after inactivity",
-            "Ctrl+L locks at any time",
+            tr("Lock after inactivity"),
+            tr("Ctrl+L locks at any time"),
             &mut s.auto_lock_minutes,
             VaultSettings::MIN_AUTO_LOCK_MINUTES..=VaultSettings::MAX_AUTO_LOCK_MINUTES,
             " min",
@@ -286,8 +291,8 @@ fn privacy_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
         widgets::divider(ui, 16.0);
         timed_row(
             ui,
-            "Clear clipboard after",
-            "Only if it still holds what VaultRust copied",
+            tr("Clear clipboard after"),
+            tr("Only if it still holds what VaultRust copied"),
             &mut s.clipboard_clear_secs,
             VaultSettings::MIN_CLIPBOARD_SECS..=VaultSettings::MAX_CLIPBOARD_SECS,
             " s",
@@ -295,8 +300,8 @@ fn privacy_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
         widgets::divider(ui, 16.0);
         timed_row(
             ui,
-            "Hide revealed secrets after",
-            "Masks passwords you clicked to show",
+            tr("Hide revealed secrets after"),
+            tr("Masks passwords you clicked to show"),
             &mut s.reveal_timeout_secs,
             VaultSettings::MIN_REVEAL_SECS..=VaultSettings::MAX_REVEAL_SECS,
             " s",
@@ -305,17 +310,17 @@ fn privacy_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
         widgets::switch_row(
             ui,
             &mut s.lock_on_session_lock,
-            "Lock when Windows locks",
-            "Win+L, sleep with sign-in on wake, switching user",
+            tr("Lock when Windows locks"),
+            tr("Win+L, sleep with sign-in on wake, switching user"),
         );
         widgets::divider(ui, 16.0);
-        widgets::switch_row(ui, &mut s.lock_on_minimize, "Lock when minimized", "");
+        widgets::switch_row(ui, &mut s.lock_on_minimize, tr("Lock when minimized"), "");
         widgets::divider(ui, 16.0);
         widgets::switch_row(
             ui,
             &mut s.hide_from_capture,
-            "Hide from screenshots and screen sharing",
-            "Uses Windows display affinity; not a defence against malware",
+            tr("Hide from screenshots and screen sharing"),
+            tr("Uses Windows display affinity; not a defence against malware"),
         );
         widgets::divider(ui, 16.0);
         hello_row(ui, ms, svc);
@@ -357,48 +362,48 @@ fn timed_row<T: egui::emath::Numeric>(
 }
 
 fn password_section(ui: &mut egui::Ui, ms: &mut MainState) {
-    section(ui, "Master password & key file", |ui| {
+    section(ui, tr("Master password & key file"), |ui| {
         let busy = ms.settings.job.is_some();
         let current_kdf = ms.vault.kdf_params();
         let has_key_file = ms.vault.uses_key_file();
         let st = &mut ms.settings;
         ui.add_enabled_ui(!busy, |ui| {
-            ui.label(small("Current"));
+            ui.label(small(tr("Current")));
             widgets::password_input(ui, &mut st.current, &mut st.reveal, "");
-            ui.label(small("New"));
+            ui.label(small(tr("New")));
             widgets::password_input(
                 ui,
                 &mut st.new,
                 &mut st.reveal,
-                "At least 10 characters (leave empty to keep the current one)",
+                tr("At least 10 characters (leave empty to keep the current one)"),
             );
             if !st.new.is_empty() {
                 widgets::strength_meter(ui, &estimate_strength(&st.new));
             }
-            ui.label(small("Confirm new"));
+            ui.label(small(tr("Confirm new")));
             widgets::password_input(ui, &mut st.confirm, &mut st.reveal, "");
-            ui.label(small("Key derivation"));
+            ui.label(small(tr("Key derivation")));
             let selected = st
                 .preset
                 .map(|p| p.label().to_string())
-                .unwrap_or_else(|| format!("Keep current ({})", current_kdf.describe()));
+                .unwrap_or_else(|| trf!("Keep current ({})", current_kdf.describe()));
             egui::ComboBox::from_id_salt("change_kdf")
                 .width(ui.available_width())
                 .icon(widgets::combo_caret)
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut st.preset, None, "Keep current");
+                    ui.selectable_value(&mut st.preset, None, tr("Keep current"));
                     for p in KdfPreset::ALL {
                         ui.selectable_value(&mut st.preset, Some(p), p.label());
                     }
                 });
-            ui.label(small("Key file"));
+            ui.label(small(tr("Key file")));
             let label = |m: KeyFileMode| match (m, has_key_file) {
-                (KeyFileMode::Keep, true) => "Keep the current key file",
-                (KeyFileMode::Keep, false) => "No key file",
-                (KeyFileMode::Use, true) => "Switch to a different key file",
-                (KeyFileMode::Use, false) => "Require a key file",
-                (KeyFileMode::Remove, _) => "Stop using a key file",
+                (KeyFileMode::Keep, true) => tr("Keep the current key file"),
+                (KeyFileMode::Keep, false) => tr("No key file"),
+                (KeyFileMode::Use, true) => tr("Switch to a different key file"),
+                (KeyFileMode::Use, false) => tr("Require a key file"),
+                (KeyFileMode::Remove, _) => tr("Stop using a key file"),
             };
             egui::ComboBox::from_id_salt("change_key_file")
                 .width(ui.available_width())
@@ -434,9 +439,9 @@ fn password_section(ui: &mut egui::Ui, ms: &mut MainState) {
         if busy {
             ui.horizontal(|ui| {
                 ui.add(egui::Spinner::new());
-                ui.label(dim("Changing password…"));
+                ui.label(dim(tr("Changing password…")));
             });
-        } else if widgets::primary_button(ui, "Apply").clicked() {
+        } else if widgets::primary_button(ui, tr("Apply")).clicked() {
             st.pw_error = None;
             let keep_password = st.new.is_empty() && st.confirm.is_empty();
             let new_key = match st.key_mode {
@@ -444,22 +449,22 @@ fn password_section(ui: &mut egui::Ui, ms: &mut MainState) {
                 KeyFileMode::Remove => Ok(None),
                 KeyFileMode::Use => match st.key_file.load() {
                     Ok(Some(k)) => Ok(Some(k)),
-                    Ok(None) => Err("Choose or create the new key file.".to_string()),
+                    Ok(None) => Err(tr("Choose or create the new key file.").to_string()),
                     Err(e) => Err(e),
                 },
             };
             let unchanged =
                 keep_password && st.key_mode == KeyFileMode::Keep && st.preset.is_none();
             if st.current.is_empty() {
-                st.pw_error = Some("Enter your current master password.".into());
+                st.pw_error = Some(tr("Enter your current master password.").into());
             } else if unchanged {
                 st.pw_error = Some(
-                    "Nothing to change: enter a new password or pick a key file option.".into(),
+                    tr("Nothing to change: enter a new password or pick a key file option.").into(),
                 );
             } else if !keep_password && st.new.chars().count() < MIN_MASTER_PASSWORD_CHARS {
-                st.pw_error = Some("The new password must be at least 10 characters.".into());
+                st.pw_error = Some(tr("The new password must be at least 10 characters.").into());
             } else if !keep_password && *st.new != *st.confirm {
-                st.pw_error = Some("The new passwords don't match.".into());
+                st.pw_error = Some(tr("The new passwords don't match.").into());
             } else {
                 match new_key {
                     Err(e) => st.pw_error = Some(e),
@@ -482,9 +487,9 @@ fn password_section(ui: &mut egui::Ui, ms: &mut MainState) {
                 }
             }
         }
-        ui.label(faint(
+        ui.label(faint(tr(
             "Existing backups keep the password they were made with.",
-        ));
+        )));
     });
 }
 
@@ -503,7 +508,7 @@ fn poll_password_job(ms: &mut MainState, svc: &mut Services) {
                     ms.settings.preset = None;
                     ms.settings.key_mode = KeyFileMode::Keep;
                     ms.settings.key_file.clear();
-                    svc.toasts.success("Unlock settings changed");
+                    svc.toasts.success(tr("Unlock settings changed"));
                 }
                 Err(VaultError::ModifiedExternally) => ms.modal = Some(Modal::ExternalChange),
                 Err(e) => ms.settings.pw_error = Some(e.to_string()),
@@ -512,29 +517,30 @@ fn poll_password_job(ms: &mut MainState, svc: &mut Services) {
         Poll::Done(Err(e)) => {
             ms.settings.job = None;
             ms.settings.pw_error = Some(match e {
-                VaultError::WrongPasswordOrTampered => "The current password is wrong.".into(),
+                VaultError::WrongPasswordOrTampered => tr("The current password is wrong.").into(),
                 other => other.to_string(),
             });
         }
         Poll::Failed => {
             ms.settings.job = None;
-            ms.settings.pw_error = Some("Password change failed unexpectedly.".into());
+            ms.settings.pw_error = Some(tr("Password change failed unexpectedly.").into());
         }
     }
 }
 
 fn backup_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
-    section(ui, "Backups", |ui| {
+    section(ui, tr("Backups"), |ui| {
         let last = ms.vault.data().last_backup;
         let status = if last == 0 {
-            "Never backed up".to_string()
+            tr("Never backed up").to_string()
         } else {
-            format!("Last verified backup {}", age_description(last, now_unix()))
+            trf!("Last verified backup {}", age_description(last, now_unix()))
         };
         let mut backup = false;
-        widgets::setting_row(ui, "Back up", &status, 160.0, |ui| {
-            backup = widgets::secondary_button(ui, &icons::with(icons::FLOPPY_DISK, "Back up…"))
-                .clicked();
+        widgets::setting_row(ui, tr("Back up"), &status, 160.0, |ui| {
+            backup =
+                widgets::secondary_button(ui, &icons::with(icons::FLOPPY_DISK, tr("Back up…")))
+                    .clicked();
         });
         if backup {
             ms.start_backup(svc);
@@ -543,13 +549,13 @@ fn backup_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
         let mut restore = false;
         widgets::setting_row(
             ui,
-            "Restore",
-            "Replaces this vault with a backup after checking its password",
+            tr("Restore"),
+            tr("Replaces this vault with a backup after checking its password"),
             160.0,
             |ui| {
                 restore = widgets::secondary_button(
                     ui,
-                    &icons::with(icons::ARROW_COUNTER_CLOCKWISE, "Restore…"),
+                    &icons::with(icons::ARROW_COUNTER_CLOCKWISE, tr("Restore…")),
                 )
                 .clicked();
             },
@@ -564,9 +570,9 @@ fn backup_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
         let auto_dir = ms.vault.auto_backup_dir();
         let existing = storage::list_auto_backups(ms.vault.path());
         let desc = match (s.auto_backup_count, existing.first()) {
-            (0, _) => "Off".to_string(),
-            (_, None) => "None yet — the first is taken on the next change".to_string(),
-            (_, Some(newest)) => format!(
+            (0, _) => tr("Off").to_string(),
+            (_, None) => tr("None yet — the first is taken on the next change").to_string(),
+            (_, Some(newest)) => trf!(
                 "{} kept · newest {}",
                 existing.len(),
                 newest
@@ -576,9 +582,9 @@ fn backup_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
             ),
         };
         let mut restore_auto = false;
-        widgets::setting_row(ui, "Automatic backups", &desc, 260.0, |ui| {
+        widgets::setting_row(ui, tr("Automatic backups"), &desc, 260.0, |ui| {
             if !existing.is_empty() {
-                restore_auto = widgets::secondary_button(ui, "Restore…").clicked();
+                restore_auto = widgets::secondary_button(ui, tr("Restore…")).clicked();
             }
             ui.add_sized(
                 [96.0, 28.0],
@@ -586,17 +592,17 @@ fn backup_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
                     .range(0..=VaultSettings::MAX_AUTO_BACKUPS)
                     .custom_formatter(|n, _| {
                         if n == 0.0 {
-                            "off".into()
+                            tr("off").into()
                         } else {
-                            format!("keep {n}")
+                            trf!("keep {n}", n)
                         }
                     }),
             );
         });
         if restore_auto {
             let pick = rfd::FileDialog::new()
-                .set_title("Restore an automatic backup")
-                .add_filter("VaultRust vault", &["vault"])
+                .set_title(tr("Restore an automatic backup"))
+                .add_filter(tr("VaultRust vault"), &["vault"])
                 .set_directory(&auto_dir)
                 .pick_file();
             if let Some(p) = pick {
@@ -609,7 +615,7 @@ fn backup_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
             ms.schedule_settings_save();
         }
         ui.add_space(4.0);
-        ui.label(faint(format!(
+        ui.label(faint(trf!(
             "Automatic backups are encrypted copies taken at most hourly before changes, in {}. \
              They protect against mistakes, not against losing the drive: keep a manual backup elsewhere.",
             auto_dir.display()
@@ -618,34 +624,34 @@ fn backup_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
 }
 
 fn breach_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
-    section(ui, "Breached-password check", |ui| {
+    section(ui, tr("Breached-password check"), |ui| {
         let list = ms.vault.data().settings.breach_list.clone();
         let status = if list.is_empty() {
-            "Not set up".to_string()
+            tr("Not set up").to_string()
         } else if ms.breach.is_running() {
-            "Checking…".to_string()
+            tr("Checking…").to_string()
         } else {
             match &ms.breach.report {
                 Some(r) if r.error.is_some() => r.error.clone().unwrap_or_default(),
-                Some(r) => format!(
+                Some(r) => trf!(
                     "{} of {} passwords found in breaches",
                     r.hits.len(),
                     r.checked
                 ),
-                None => "Waiting to check".to_string(),
+                None => tr("Waiting to check").to_string(),
             }
         };
         let (mut choose, mut clear) = (false, false);
-        widgets::setting_row(ui, "Pwned Passwords list", &status, 220.0, |ui| {
+        widgets::setting_row(ui, tr("Pwned Passwords list"), &status, 220.0, |ui| {
             if !list.is_empty() {
-                clear = widgets::icon_button(ui, icons::X, "Stop checking").clicked();
+                clear = widgets::icon_button(ui, icons::X, tr("Stop checking")).clicked();
             }
             choose = widgets::secondary_button(
                 ui,
                 if list.is_empty() {
-                    "Choose file…"
+                    tr("Choose file…")
                 } else {
-                    "Change…"
+                    tr("Change…")
                 },
             )
             .clicked();
@@ -655,9 +661,9 @@ fn breach_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
         }
         if choose {
             if let Some(p) = rfd::FileDialog::new()
-                .set_title("Choose a Pwned Passwords SHA-1 list")
-                .add_filter("Text", &["txt"])
-                .add_filter("All files", &["*"])
+                .set_title(tr("Choose a Pwned Passwords SHA-1 list"))
+                .add_filter(tr("Text"), &["txt"])
+                .add_filter(tr("All files"), &["*"])
                 .pick_file()
             {
                 match crate::breach::BreachList::open(&p) {
@@ -665,7 +671,7 @@ fn breach_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
                         ms.vault.data_mut().settings.breach_list = p.display().to_string();
                         ms.commit(svc.toasts);
                     }
-                    Err(e) => svc.toasts.error(format!("That file can't be used: {e}")),
+                    Err(e) => svc.toasts.error(trf!("That file can't be used: {e}", e)),
                 }
             }
         }
@@ -675,9 +681,9 @@ fn breach_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
         }
         ui.add_space(4.0);
         ui.label(faint(
-            "Checks your passwords against a copy of the Have I Been Pwned list on this computer — \
+            tr("Checks your passwords against a copy of the Have I Been Pwned list on this computer — \
              VaultRust never goes online. Download the SHA-1 list (ordered by hash) with the official \
-             PwnedPasswordsDownloader, then choose the file here.",
+             PwnedPasswordsDownloader, then choose the file here."),
         ));
     });
 }
@@ -685,19 +691,19 @@ fn breach_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
 /// Pick a CSV/JSON export from another app and show the import preview.
 pub fn start_import(ms: &mut MainState, svc: &mut Services) {
     let Some(path) = rfd::FileDialog::new()
-        .set_title("Import")
-        .add_filter("CSV, JSON or KeePass", &["csv", "json", "kdbx"])
-        .add_filter("All files", &["*"])
+        .set_title(tr("Import"))
+        .add_filter(tr("CSV, JSON or KeePass"), &["csv", "json", "kdbx"])
+        .add_filter(tr("All files"), &["*"])
         .pick_file()
     else {
         return;
     };
     let bytes = match read_import_file(&path) {
         Ok(b) => b,
-        Err(e) => return svc.toasts.error(format!("Import failed: {e}")),
+        Err(e) => return svc.toasts.error(trf!("Import failed: {e}", e)),
     };
     match import_auto(&path, &bytes) {
-        Ok(r) if r.entries.is_empty() => svc.toasts.error("No items found in that file."),
+        Ok(r) if r.entries.is_empty() => svc.toasts.error(tr("No items found in that file.")),
         Ok(r) => {
             ms.modal = Some(Modal::ImportPreview {
                 source: path,
@@ -710,21 +716,21 @@ pub fn start_import(ms: &mut MainState, svc: &mut Services) {
                 path, bytes,
             ))));
         }
-        Err(e) => svc.toasts.error(format!("Import failed: {e}")),
+        Err(e) => svc.toasts.error(trf!("Import failed: {e}", e)),
     }
 }
 
 fn import_export_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
-    section(ui, "Import & export", |ui| {
+    section(ui, tr("Import & export"), |ui| {
         let mut import = false;
         widgets::setting_row(
             ui,
-            "Import",
-            "KeePass .kdbx, or CSV / JSON from Chrome, Edge, Firefox, Bitwarden, 1Password, LastPass",
+            tr("Import"),
+            tr("KeePass .kdbx, or CSV / JSON from Chrome, Edge, Firefox, Bitwarden, 1Password, LastPass"),
             160.0,
             |ui| {
                 import =
-                    widgets::secondary_button(ui, &icons::with(icons::DOWNLOAD_SIMPLE, "Import…"))
+                    widgets::secondary_button(ui, &icons::with(icons::DOWNLOAD_SIMPLE, tr("Import…")))
                         .clicked();
             },
         );
@@ -735,14 +741,14 @@ fn import_export_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Servic
         let mut export = false;
         widgets::setting_row(
             ui,
-            "Export",
-            "Writes every secret to an unencrypted CSV file",
+            tr("Export"),
+            tr("Writes every secret to an unencrypted CSV file"),
             160.0,
             |ui| {
                 export = ui
                     .add(
                         egui::Button::new(
-                            RichText::new(icons::with(icons::UPLOAD_SIMPLE, "Export…"))
+                            RichText::new(icons::with(icons::UPLOAD_SIMPLE, tr("Export…")))
                                 .color(danger()),
                         )
                         .fill(surface_2())
@@ -763,30 +769,30 @@ fn import_export_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Servic
 }
 
 fn app_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
-    section(ui, "App", |ui| {
+    section(ui, tr("App"), |ui| {
         let count = svc.recent.paths.len();
         let mut clear = false;
         let desc = match count {
-            0 => "The start screen lists no vaults".to_string(),
-            1 => "1 vault listed on the start screen".to_string(),
-            n => format!("{n} vaults listed on the start screen"),
+            0 => tr("The start screen lists no vaults").to_string(),
+            1 => tr("1 vault listed on the start screen").to_string(),
+            n => trf!("{n} vaults listed on the start screen", n),
         };
-        widgets::setting_row(ui, "Recent vaults", &desc, 160.0, |ui| {
+        widgets::setting_row(ui, tr("Recent vaults"), &desc, 160.0, |ui| {
             clear = ui
-                .add_enabled_ui(count > 0, |ui| widgets::secondary_button(ui, "Clear"))
+                .add_enabled_ui(count > 0, |ui| widgets::secondary_button(ui, tr("Clear")))
                 .inner
                 .clicked();
         });
         if clear {
             svc.recent.clear();
-            svc.toasts.info("Recent list cleared");
+            svc.toasts.info(tr("Recent list cleared"));
         }
         widgets::divider(ui, 16.0);
         let mut theme = svc.prefs.theme;
         widgets::setting_row(
             ui,
-            "Appearance",
-            "System follows the Windows light / dark setting",
+            tr("Appearance"),
+            tr("System follows the Windows light / dark setting"),
             260.0,
             |ui| {
                 for t in crate::prefs::ThemePref::ALL.into_iter().rev() {
@@ -800,14 +806,22 @@ fn app_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
             svc.prefs.theme = theme;
             svc.prefs.save();
         }
+        widgets::divider(ui, 16.0);
+        widgets::setting_row(
+            ui,
+            tr("Language"),
+            tr("The notification-area menu follows after VaultRust restarts"),
+            260.0,
+            |ui| super::language_picker(ui, svc.prefs),
+        );
         if svc.tray {
             widgets::divider(ui, 16.0);
             let mut keep = svc.prefs.close_to_tray;
             widgets::switch_row(
                 ui,
                 &mut keep,
-                "Keep running in the notification area",
-                "Closing the window locks the vault and keeps quick open and auto-type ready",
+                tr("Keep running in the notification area"),
+                tr("Closing the window locks the vault and keeps quick open and auto-type ready"),
             );
             if keep != svc.prefs.close_to_tray {
                 svc.prefs.close_to_tray = keep;
@@ -818,10 +832,10 @@ fn app_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
         let mut tour = false;
         widgets::setting_row(
             ui,
-            "Welcome tour",
-            "A quick look at saving, copying, auto-type and two-step codes",
+            tr("Welcome tour"),
+            tr("A quick look at saving, copying, auto-type and two-step codes"),
             160.0,
-            |ui| tour = widgets::secondary_button(ui, "Show the tour again").clicked(),
+            |ui| tour = widgets::secondary_button(ui, tr("Show the tour again")).clicked(),
         );
         if tour {
             ms.tour = Some(super::tutorial::Tour::default());
@@ -833,32 +847,44 @@ fn app_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
         widgets::divider(ui, 16.0);
         let status = |ui: &mut egui::Ui, on: bool| {
             ui.label(if on {
-                RichText::new("On").color(accent())
+                RichText::new(tr("On")).color(accent())
             } else {
-                RichText::new("Unavailable").color(text_faint())
+                RichText::new(tr("Unavailable")).color(text_faint())
             });
         };
         let hotkey = crate::os_protect::QUICK_OPEN_HOTKEY;
         let desc = if svc.hotkeys.quick_open {
-            format!("{hotkey} brings VaultRust forward with quick open; Ctrl+K inside the app")
+            trf!(
+                "{hotkey} brings VaultRust forward with quick open; Ctrl+K inside the app",
+                hotkey
+            )
         } else {
-            format!("{hotkey} is used by another app; Ctrl+K still works inside VaultRust")
+            trf!(
+                "{hotkey} is used by another app; Ctrl+K still works inside VaultRust",
+                hotkey
+            )
         };
-        widgets::setting_row(ui, "Quick open", &desc, 80.0, |ui| {
+        widgets::setting_row(ui, tr("Quick open"), &desc, 80.0, |ui| {
             status(ui, svc.hotkeys.quick_open)
         });
         widgets::divider(ui, 16.0);
         let hotkey = crate::os_protect::AUTO_TYPE_HOTKEY;
         let desc = if svc.hotkeys.auto_type {
-            format!("Click into a login form in any app and press {hotkey}; you pick what is typed")
+            trf!(
+                "Click into a login form in any app and press {hotkey}; you pick what is typed",
+                hotkey
+            )
         } else {
-            format!("{hotkey} is used by another app, so auto-type is unavailable")
+            trf!(
+                "{hotkey} is used by another app, so auto-type is unavailable",
+                hotkey
+            )
         };
-        widgets::setting_row(ui, "Auto-type", &desc, 80.0, |ui| {
+        widgets::setting_row(ui, tr("Auto-type"), &desc, 80.0, |ui| {
             status(ui, svc.hotkeys.auto_type)
         });
         ui.add_space(4.0);
-        ui.label(faint(format!(
+        ui.label(faint(trf!(
             "VaultRust {} · your vault never leaves this computer · no telemetry",
             env!("CARGO_PKG_VERSION")
         )));

@@ -16,7 +16,9 @@ use super::widgets::{self, centered_column};
 use super::{Services, Transition};
 use crate::error::VaultError;
 use crate::format::VaultFile;
+use crate::i18n::tr;
 use crate::storage;
+use crate::trf;
 use crate::vault::{Credentials, UnlockedVault};
 
 /// Failed attempts allowed before a growing delay kicks in.
@@ -66,7 +68,7 @@ impl UnlockState {
                     vault_id = Some(f.header.vault_id);
                     let mut d = f.header.kdf.describe();
                     if needs_key_file {
-                        d.push_str(" · key file");
+                        d.push_str(tr(" · key file"));
                     }
                     Ok(d)
                 }
@@ -138,7 +140,7 @@ impl UnlockState {
             }
         };
         if self.needs_key_file && key_file.is_none() {
-            self.error = Some("Choose this vault's key file.".into());
+            self.error = Some(tr("Choose this vault's key file.").into());
             return;
         }
         let creds = Credentials::with_key_file(
@@ -172,7 +174,7 @@ pub fn show(ctx: &egui::Context, s: &mut UnlockState, _svc: &mut Services) -> Op
             }
             Poll::Failed => {
                 s.hello_job = None;
-                s.error = Some("Windows Hello failed unexpectedly.".into());
+                s.error = Some(tr("Windows Hello failed unexpectedly.").into());
             }
         }
     }
@@ -193,9 +195,9 @@ pub fn show(ctx: &egui::Context, s: &mut UnlockState, _svc: &mut Services) -> Op
                         s.failures += 1;
                         s.retry_at = retry_delay(s.failures).map(|d| Instant::now() + d);
                         if s.needs_key_file {
-                            "Wrong master password or key file.".into()
+                            tr("Wrong master password or key file.").into()
                         } else {
-                            "Wrong master password.".into()
+                            tr("Wrong master password.").into()
                         }
                     }
                     other => other.to_string(),
@@ -203,7 +205,7 @@ pub fn show(ctx: &egui::Context, s: &mut UnlockState, _svc: &mut Services) -> Op
             }
             Poll::Failed => {
                 s.job = None;
-                s.error = Some("Unlocking failed unexpectedly.".into());
+                s.error = Some(tr("Unlocking failed unexpectedly.").into());
             }
         }
     }
@@ -220,7 +222,7 @@ pub fn show(ctx: &egui::Context, s: &mut UnlockState, _svc: &mut Services) -> Op
         .path
         .file_stem()
         .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "Vault".into());
+        .unwrap_or_else(|| tr("Vault").into());
 
     egui::CentralPanel::default()
         .frame(Frame::new().fill(bg()).inner_margin(24.0))
@@ -254,7 +256,7 @@ pub fn show(ctx: &egui::Context, s: &mut UnlockState, _svc: &mut Services) -> Op
 
                         match &info {
                             Err(e) => {
-                                widgets::danger_box(ui, &format!("This file can't be opened: {e}"))
+                                widgets::danger_box(ui, &trf!("This file can't be opened: {e}", e))
                             }
                             Ok(_) => {
                                 let resp = ui
@@ -263,7 +265,7 @@ pub fn show(ctx: &egui::Context, s: &mut UnlockState, _svc: &mut Services) -> Op
                                             ui,
                                             &mut s.password,
                                             &mut s.reveal,
-                                            "Master password",
+                                            tr("Master password"),
                                         )
                                     })
                                     .inner;
@@ -281,7 +283,9 @@ pub fn show(ctx: &egui::Context, s: &mut UnlockState, _svc: &mut Services) -> Op
                                 if let Some(e) = &s.error {
                                     widgets::error_text(ui, e);
                                     if s.failures >= FREE_ATTEMPTS {
-                                        ui.label(small("Check Caps Lock and the keyboard layout."));
+                                        ui.label(small(tr(
+                                            "Check Caps Lock and the keyboard layout.",
+                                        )));
                                     }
                                 }
                                 ui.add_space(4.0);
@@ -289,20 +293,20 @@ pub fn show(ctx: &egui::Context, s: &mut UnlockState, _svc: &mut Services) -> Op
                                     ui.horizontal(|ui| {
                                         ui.add(egui::Spinner::new());
                                         ui.label(dim(if s.hello_job.is_some() {
-                                            "Waiting for Windows Hello…"
+                                            tr("Waiting for Windows Hello…")
                                         } else {
-                                            "Unlocking…"
+                                            tr("Unlocking…")
                                         }));
                                     });
                                 } else if let Some(w) = wait {
                                     widgets::primary_button_wide(
                                         ui,
-                                        &format!("Try again in {} s", w.as_secs() + 1),
+                                        &trf!("Try again in {} s", w.as_secs() + 1),
                                         false,
                                     );
                                 } else if widgets::primary_button_wide(
                                     ui,
-                                    &icons::with(icons::LOCK_OPEN, "Unlock"),
+                                    &icons::with(icons::LOCK_OPEN, tr("Unlock")),
                                     true,
                                 )
                                 .clicked()
@@ -316,7 +320,7 @@ pub fn show(ctx: &egui::Context, s: &mut UnlockState, _svc: &mut Services) -> Op
                                         ui,
                                         &icons::with(
                                             icons::FINGERPRINT,
-                                            "Unlock with Windows Hello",
+                                            tr("Unlock with Windows Hello"),
                                         ),
                                     )
                                     .clicked()
@@ -330,7 +334,11 @@ pub fn show(ctx: &egui::Context, s: &mut UnlockState, _svc: &mut Services) -> Op
                         ui.add_enabled_ui(!busy, |ui| {
                             match widgets::centered_links(
                                 ui,
-                                &["Open another vault…", "Create a vault", "Start screen"],
+                                &[
+                                    tr("Open another vault…"),
+                                    tr("Create a vault"),
+                                    tr("Start screen"),
+                                ],
                             ) {
                                 Some(0) => {
                                     if let Some(p) = pick_vault_file() {

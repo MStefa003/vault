@@ -8,6 +8,8 @@ use eframe::egui::{
 use super::icons;
 use super::theme::{self, *};
 use crate::analysis::StrengthReport;
+use crate::i18n::tr;
+use crate::trf;
 
 /// Fixed mask so a secret's length is not revealed.
 pub const MASK: &str = "••••••••••••";
@@ -284,7 +286,7 @@ pub fn password_input(ui: &mut Ui, value: &mut String, reveal: &mut bool, hint: 
     );
     let toggle = ui
         .interact(button, resp.id.with("reveal"), Sense::click())
-        .on_hover_text(if shown { "Hide" } else { "Show" })
+        .on_hover_text(if shown { tr("Hide") } else { tr("Show") })
         .on_hover_cursor(CursorIcon::PointingHand);
     let p = ui.painter();
     if toggle.hovered() {
@@ -484,7 +486,7 @@ pub fn strength_meter(ui: &mut Ui, report: &StrengthReport) {
                 .color(color)
                 .size(12.5),
         );
-        let mut detail = format!("about {:.0} bits", report.bits);
+        let mut detail = trf!("about {:.0} bits", report.bits);
         if let Some(w) = report.warnings.first() {
             detail.push_str(&format!(" · {}", w.to_lowercase()));
         }
@@ -542,7 +544,7 @@ pub fn tag_chip_removable(ui: &mut Ui, text: &str) -> bool {
                             .corner_radius(4.0)
                             .min_size(Vec2::splat(18.0)),
                     )
-                    .on_hover_text("Remove tag")
+                    .on_hover_text(tr("Remove tag"))
                     .clicked();
             });
         });
@@ -686,8 +688,9 @@ pub fn kind_tile(ui: &Ui, rect: Rect, icon: &str) {
 }
 
 /// Muted tile colours for monograms; white text is readable on all of them
-/// in both themes.
-const TILE_COLORS: [Color32; 10] = [
+/// in both themes. An item's chosen colour is stored as a 1-based index into
+/// this list ([`crate::model::Entry::color`]), so it is only ever appended to.
+pub const TILE_COLORS: [Color32; 10] = [
     Color32::from_rgb(0x3d, 0x6c, 0x9e),
     Color32::from_rgb(0x8a, 0x55, 0x9a),
     Color32::from_rgb(0xa9, 0x55, 0x3c),
@@ -700,20 +703,16 @@ const TILE_COLORS: [Color32; 10] = [
     Color32::from_rgb(0x2f, 0x7d, 0x5c),
 ];
 
-/// An entry's letter tile: the first letter of its title on a colour picked
-/// from its website (or title), so every item for the same site looks the
-/// same and lists can be scanned by colour as well as by name.
-pub fn entry_tile(ui: &Ui, rect: Rect, e: &crate::model::Entry) {
-    let p = ui.painter();
-    let letter = e
-        .title
-        .chars()
-        .find(|c| c.is_alphanumeric())
-        .map(|c| c.to_uppercase().to_string());
-    let Some(letter) = letter else {
-        kind_tile(ui, rect, icons::kind_icon(e.kind));
-        return;
-    };
+/// The colour an item's tile is drawn in: the one chosen for it, or one
+/// picked from its website (or title), so every item for the same site looks
+/// the same.
+pub fn tile_color(e: &crate::model::Entry) -> Color32 {
+    if let Some(c) = (e.color as usize)
+        .checked_sub(1)
+        .and_then(|i| TILE_COLORS.get(i))
+    {
+        return *c;
+    }
     let seed = e
         .first_of(crate::model::FieldKind::Url)
         .map(crate::autotype::url_host)
@@ -723,14 +722,32 @@ pub fn entry_tile(ui: &Ui, rect: Rect, e: &crate::model::Entry) {
     let hash = seed.bytes().fold(0x811c_9dc5_u32, |h, b| {
         (h ^ b as u32).wrapping_mul(0x0100_0193)
     });
-    let color = TILE_COLORS[hash as usize % TILE_COLORS.len()];
+    TILE_COLORS[hash as usize % TILE_COLORS.len()]
+}
+
+/// An entry's tile: its chosen icon, or the first letter of its title, on
+/// its colour ([`tile_color`]). Untitled items without an icon show their
+/// type's icon.
+pub fn entry_tile(ui: &Ui, rect: Rect, e: &crate::model::Entry) {
+    let p = ui.painter();
     let side = rect.width().min(rect.height());
-    p.rect_filled(rect, (side * 0.24).round(), color);
+    let (glyph, size) = match icons::item_icon(&e.icon) {
+        Some(g) => (g.to_string(), 0.56),
+        None => match e.title.chars().find(|c| c.is_alphanumeric()) {
+            Some(c) => (c.to_uppercase().to_string(), 0.48),
+            None if e.color == 0 => {
+                kind_tile(ui, rect, icons::kind_icon(e.kind));
+                return;
+            }
+            None => (icons::kind_icon(e.kind).to_string(), 0.56),
+        },
+    };
+    p.rect_filled(rect, (side * 0.24).round(), tile_color(e));
     p.text(
         rect.center() + Vec2::new(0.0, -0.5),
         Align2::CENTER_CENTER,
-        letter,
-        FontId::new((side * 0.48).round(), semibold()),
+        glyph,
+        FontId::new((side * size).round(), semibold()),
         Color32::WHITE,
     );
 }
@@ -794,7 +811,7 @@ pub fn offline_footer(ui: &Ui) {
         egui::TextFormat::simple(font.clone(), accent()),
     );
     job.append(
-        "Encrypted on this device  ·  Your vault never leaves it",
+        tr("Encrypted on this device  ·  Your vault never leaves it"),
         6.0,
         egui::TextFormat::simple(font, text_faint()),
     );

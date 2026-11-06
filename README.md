@@ -27,6 +27,19 @@ code-signed yet: choose **More info → Run anyway**.
   link and VaultRust shows the current code with a countdown — offline
 * **Tags**, sorting (name, recently used, modified, created) and fuzzy search
   (`gml` finds Gmail) over titles, tags, usernames and websites
+* **Change many items at once**: Ctrl+click, Shift+click or Ctrl+A to select
+  several items, then tag, favorite or move them to the Trash together (one
+  Undo brings them all back)
+* **Item icons**: every item gets a coloured letter tile; pick an icon and
+  colour of your own from the tile next to its title
+* **Password rules per site**: for sites that limit length or symbols, set
+  the rules once under the password field (“Set password rules for this
+  site”) and generated passwords for that site and its subdomains follow
+  them. Saved rules are listed on the Generator page
+* **Duplicate finder**: the Security page lists items for the same account
+  (same website and username) and keeps the newest with one click
+* **English and Greek (Ελληνικά)**: follows the Windows display language, or pick
+  one in Settings → App → Language (also on the start and unlock screens)
 * **Password history**: replaced passwords are kept (last 10 per item)
 * **Trash**: deleted items can be restored for 30 days, or straight away with
   Undo (or Ctrl+Z) in the notification that appears
@@ -184,6 +197,7 @@ src/
   totp.rs           RFC 6238 one-time codes, otpauth:// parsing
   autotype.rs       window matching and keystroke sequences for auto-type
   hello.rs          Windows Hello quick unlock (TPM-backed key credential)
+  i18n.rs, i18n/    interface language: English text as keys, Greek table
   prefs.rs          app-level theme / close-button preferences
   kdbx.rs           KeePass 3.1 / 4.x import
   encoding.rs       Base32 / Base64 / percent decoding

@@ -92,13 +92,12 @@ impl KdfParams {
     }
 
     pub fn describe(&self) -> String {
-        let plural =
-            |n: u32, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+        use crate::i18n::plural;
         format!(
             "Argon2id, {} MiB, {}, {}",
             self.m_cost_kib / 1024,
-            plural(self.t_cost, "pass", "passes"),
-            plural(self.p_cost, "lane", "lanes")
+            plural(self.t_cost as usize, "{n} pass", "{n} passes"),
+            plural(self.p_cost as usize, "{n} lane", "{n} lanes")
         )
     }
 }

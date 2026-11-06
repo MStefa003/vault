@@ -36,13 +36,13 @@ impl std::fmt::Debug for Totp {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum TotpError {
-    #[error("the one-time code secret is empty")]
+    #[error("{}", crate::i18n::tr("the one-time code secret is empty"))]
     Empty,
-    #[error("the one-time code secret is not valid Base32")]
+    #[error("{}", crate::i18n::tr("the one-time code secret is not valid Base32"))]
     BadSecret,
-    #[error("only time-based (TOTP) codes are supported")]
+    #[error("{}", crate::i18n::tr("only time-based (TOTP) codes are supported"))]
     NotTotp,
-    #[error("unsupported one-time code settings")]
+    #[error("{}", crate::i18n::tr("unsupported one-time code settings"))]
     BadParameter,
 }
 

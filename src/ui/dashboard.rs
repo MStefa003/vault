@@ -24,9 +24,11 @@ use super::theme::*;
 use super::widgets;
 use super::{settings_page, Services};
 use crate::autotype::url_host;
+use crate::i18n::tr;
 use crate::model::{Entry, EntryKind, FieldKind};
 use crate::timeutil::{age_description, now_unix};
 use crate::totp::{format_code, Totp};
+use crate::trf;
 
 const SEARCH_ID: &str = "vaultrust_home_search";
 /// Backups older than this are flagged.
@@ -111,7 +113,7 @@ fn content(ui: &mut egui::Ui, ms: &mut MainState, acts: &mut Vec<Act>) {
 fn new_item_button(ui: &mut egui::Ui, acts: &mut Vec<Act>) {
     let resp = widgets::primary_button(
         ui,
-        &format!("{}  New item  {}", icons::PLUS, icons::CARET_DOWN),
+        &trf!("{}  New item  {}", icons::PLUS, icons::CARET_DOWN),
     );
     egui::Popup::menu(&resp).show(|ui| {
         ui.set_min_width(180.0);
@@ -134,11 +136,11 @@ fn top_bar(ui: &mut egui::Ui, query: &mut String, count: usize, acts: &mut Vec<A
         |ui| {
             new_item_button(ui, acts);
             ui.add_space(4.0);
-            if widgets::secondary_button(ui, &icons::with(icons::QR_CODE, "Scan 2FA code"))
-                .on_hover_text(
+            if widgets::secondary_button(ui, &icons::with(icons::QR_CODE, tr("Scan 2FA code")))
+                .on_hover_text(tr(
                     "Setting up two-step verification? Show the site's QR code on screen and \
                      VaultRust adds the code to the matching login",
-                )
+                ))
                 .clicked()
             {
                 acts.push(Act::ScanQr);
@@ -159,7 +161,7 @@ fn top_bar(ui: &mut egui::Ui, query: &mut String, count: usize, acts: &mut Vec<A
                         .id(Id::new(SEARCH_ID))
                         .frame(false)
                         .font(FontId::proportional(18.0))
-                        .hint_text(hint(format!("Search {count} items")))
+                        .hint_text(hint(trf!("Search {count} items", count)))
                         .desired_width(ui.available_width() - hint_w),
                 );
                 if resp.has_focus() && ui.input(|i| i.key_pressed(Key::Escape)) {
@@ -219,13 +221,13 @@ fn pinned(ui: &mut egui::Ui, ms: &MainState, now: i64, acts: &mut Vec<Act>) {
     let mut items: Vec<&Entry> = data.entries.iter().filter(|e| e.favorite).collect();
     items.sort_by_key(|e| e.title.to_lowercase());
 
-    section_title(ui, "Pinned", |ui| {
-        if !items.is_empty() && small_link(ui, "Favorites").clicked() {
+    section_title(ui, tr("Pinned"), |ui| {
+        if !items.is_empty() && small_link(ui, tr("Favorites")).clicked() {
             acts.push(Act::Nav(Nav::Page(Page::Items(Category::Favorites))));
         }
     });
     if items.is_empty() {
-        ui.label(dim(format!(
+        ui.label(dim(trf!(
             "Star items you use often ({}) and they appear here.",
             icons::STAR
         )));
@@ -343,25 +345,25 @@ fn copy_targets(e: &Entry, now: i64) -> Vec<(String, String, Zeroizing<String>, 
     {
         out.push((
             icons::USER.to_string(),
-            "Copy username".to_string(),
+            tr("Copy username").to_string(),
             Zeroizing::new(v.to_string()),
-            "Username",
+            tr("Username"),
         ));
     }
     if let Some(v) = e.first_of(FieldKind::Password) {
         out.push((
             icons::PASSWORD.to_string(),
-            "Copy password".to_string(),
+            tr("Copy password").to_string(),
             Zeroizing::new(v.to_string()),
-            "Password",
+            tr("Password"),
         ));
     }
     if let Some(t) = e.totp_secret().and_then(|s| Totp::parse(s).ok()) {
         out.push((
             icons::CLOCK_COUNTDOWN.to_string(),
-            format!("Copy one-time code · {}s left", t.remaining_at(now)),
+            trf!("Copy one-time code · {}s left", t.remaining_at(now)),
             Zeroizing::new(t.code_at(now)),
-            "One-time code",
+            tr("One-time code"),
         ));
     }
     out
@@ -389,19 +391,26 @@ fn health(ui: &mut egui::Ui, ms: &MainState, now: i64, acts: &mut Vec<Act>) {
     let h = &ms.health;
     let data = ms.vault.data();
 
-    section_title(ui, "Password health", |ui| {
+    section_title(ui, tr("Password health"), |ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
         let stale = data.last_backup == 0 || now - data.last_backup > STALE_BACKUP_DAYS * 86_400;
-        if small_link(ui, if stale { "Back up now" } else { "Back up" })
-            .on_hover_text("Save a verified, encrypted copy of this vault")
-            .clicked()
+        if small_link(
+            ui,
+            if stale {
+                tr("Back up now")
+            } else {
+                tr("Back up")
+            },
+        )
+        .on_hover_text(tr("Save a verified, encrypted copy of this vault"))
+        .clicked()
         {
             acts.push(Act::Backup);
         }
         let status = if data.last_backup == 0 {
-            "Never backed up".to_string()
+            tr("Never backed up").to_string()
         } else {
-            format!("Backed up {}", age_description(data.last_backup, now))
+            trf!("Backed up {}", age_description(data.last_backup, now))
         };
         ui.label(
             RichText::new(status)
@@ -411,7 +420,7 @@ fn health(ui: &mut egui::Ui, ms: &MainState, now: i64, acts: &mut Vec<Act>) {
     });
 
     if h.total_passwords == 0 {
-        ui.label(dim("No passwords yet."));
+        ui.label(dim(tr("No passwords yet.")));
         return;
     }
 
@@ -455,7 +464,7 @@ fn health(ui: &mut egui::Ui, ms: &MainState, now: i64, acts: &mut Vec<Act>) {
             Some(danger()),
             h.weak.len(),
             "weak",
-            (!h.weak.is_empty()).then_some("Review weak passwords"),
+            (!h.weak.is_empty()).then_some(tr("Review weak passwords")),
         ) {
             acts.push(security());
         }
@@ -463,11 +472,11 @@ fn health(ui: &mut egui::Ui, ms: &MainState, now: i64, acts: &mut Vec<Act>) {
         let mut problems: Vec<(usize, &str, Color32)> = vec![
             (h.reused_count(), "reused", warn()),
             (h.expired.len(), "expired", danger()),
-            (h.expiring.len(), "expiring soon", warn()),
-            (h.old.len(), "over a year old", text_dim()),
+            (h.expiring.len(), tr("expiring soon"), warn()),
+            (h.old.len(), tr("over a year old"), text_dim()),
         ];
         if let Some(b) = &ms.breach.report {
-            problems.insert(0, (b.hits.len(), "in data breaches", danger()));
+            problems.insert(0, (b.hits.len(), tr("in data breaches"), danger()));
         }
         problems.retain(|(n, _, _)| *n > 0);
 
@@ -477,9 +486,12 @@ fn health(ui: &mut egui::Ui, ms: &MainState, now: i64, acts: &mut Vec<Act>) {
 
         if problems.is_empty() && h.weak.is_empty() {
             ui.label(
-                RichText::new(icons::with(icons::CHECK, "No reused or breached passwords"))
-                    .size(13.0)
-                    .color(text_dim()),
+                RichText::new(icons::with(
+                    icons::CHECK,
+                    tr("No reused or breached passwords"),
+                ))
+                .size(13.0)
+                .color(text_dim()),
             );
         }
         for (n, label, color) in problems {
@@ -497,7 +509,7 @@ fn health(ui: &mut egui::Ui, ms: &MainState, now: i64, acts: &mut Vec<Act>) {
                     .size(12.5)
                     .color(warn()),
             );
-            if widgets::link_button(ui, "Settings").clicked() {
+            if widgets::link_button(ui, tr("Settings")).clicked() {
                 acts.push(Act::Nav(Nav::Page(Page::Settings)));
             }
         });
@@ -549,7 +561,7 @@ fn issue(ui: &mut egui::Ui, n: usize, label: &str, color: Color32) -> bool {
             ui.label(RichText::new(label).size(13.0).color(text_dim()));
         })
         .response;
-    clickable(ui, resp, Some("Review in Security"))
+    clickable(ui, resp, Some(tr("Review in Security")))
 }
 
 fn clickable(ui: &egui::Ui, resp: egui::Response, tip: Option<&str>) -> bool {
@@ -600,9 +612,9 @@ fn table_header(ui: &mut egui::Ui, title: &str, last: &str) {
         );
     };
     label(rect.left(), title, Align2::LEFT_CENTER);
-    label(rect.left() + cols.user, "Username", Align2::LEFT_CENTER);
+    label(rect.left() + cols.user, tr("Username"), Align2::LEFT_CENTER);
     if let Some(site) = cols.site {
-        label(rect.left() + site, "Website", Align2::LEFT_CENTER);
+        label(rect.left() + site, tr("Website"), Align2::LEFT_CENTER);
     }
     label(rect.right() - 8.0, last, Align2::RIGHT_CENTER);
     ui.add_space(4.0);
@@ -709,10 +721,10 @@ fn recent(ui: &mut egui::Ui, ms: &MainState, now: i64, acts: &mut Vec<Act>) {
     let (title, last, items): (&str, &str, Vec<&Entry>) = if used.is_empty() {
         let mut edited: Vec<&Entry> = data.entries.iter().collect();
         edited.sort_by_key(|e| std::cmp::Reverse(e.modified));
-        ("Recently edited", "Edited", edited)
+        (tr("Recently edited"), tr("Edited"), edited)
     } else {
         used.sort_by_key(|e| std::cmp::Reverse(e.last_used));
-        ("Recently used", "Used", used)
+        (tr("Recently used"), tr("Used"), used)
     };
     table_header(ui, title, last);
     // More rows on taller windows.
@@ -726,7 +738,7 @@ fn recent(ui: &mut egui::Ui, ms: &MainState, now: i64, acts: &mut Vec<Act>) {
         table_row(ui, e, &age_description(at, now), now, acts);
     }
     ui.add_space(10.0);
-    if widgets::link_button(ui, &format!("Show all {} items", data.entries.len())).clicked() {
+    if widgets::link_button(ui, &trf!("Show all {} items", data.entries.len())).clicked() {
         acts.push(Act::Nav(Nav::Page(Page::Items(Category::All))));
     }
 }
@@ -750,16 +762,16 @@ fn search_results(ui: &mut egui::Ui, ms: &MainState, q: &str, acts: &mut Vec<Act
     }
     if hits.is_empty() {
         ui.label(dim(
-            "Nothing matches. Search covers titles, tags, usernames, emails and websites — never passwords.",
+            tr("Nothing matches. Search covers titles, tags, usernames, emails and websites — never passwords."),
         ));
         return;
     }
-    let title = format!(
-        "{} result{}  ·  Enter opens the first",
+    let title = crate::i18n::plural(
         hits.len(),
-        if hits.len() == 1 { "" } else { "s" }
+        "{n} result  ·  Enter opens the first",
+        "{n} results  ·  Enter opens the first",
     );
-    table_header(ui, &title, "Type");
+    table_header(ui, &title, tr("Type"));
     let now = now_unix();
     for (_, e) in hits.iter().take(25) {
         table_row(ui, e, e.kind.label(), now, acts);
@@ -780,17 +792,17 @@ fn empty_vault(ui: &mut egui::Ui, acts: &mut Vec<Act>) {
             accent(),
         );
         ui.add_space(18.0);
-        ui.label(strong("Your vault is empty", 22.0));
+        ui.label(strong(tr("Your vault is empty"), 22.0));
         ui.add_space(4.0);
-        ui.label(dim(
+        ui.label(dim(tr(
             "Everything you save here is encrypted on this computer. Start with a login, \
              or bring your passwords over from your browser.",
-        ));
+        )));
         ui.add_space(22.0);
     });
     if widgets::primary_button_wide(
         ui,
-        &icons::with(kind_icon(EntryKind::Login), "Add a login"),
+        &icons::with(kind_icon(EntryKind::Login), tr("Add a login")),
         true,
     )
     .clicked()
@@ -800,9 +812,9 @@ fn empty_vault(ui: &mut egui::Ui, acts: &mut Vec<Act>) {
     ui.add_space(4.0);
     if widgets::secondary_button_wide(
         ui,
-        &icons::with(icons::DOWNLOAD_SIMPLE, "Import from a browser or password manager…"),
+        &icons::with(icons::DOWNLOAD_SIMPLE, tr("Import from a browser or password manager…")),
     )
-    .on_hover_text("Chrome, Edge, Firefox, Bitwarden, 1Password, LastPass or KeePass — read entirely on this computer")
+    .on_hover_text(tr("Chrome, Edge, Firefox, Bitwarden, 1Password, LastPass or KeePass — read entirely on this computer"))
     .clicked()
     {
         acts.push(Act::Import);
@@ -810,21 +822,23 @@ fn empty_vault(ui: &mut egui::Ui, acts: &mut Vec<Act>) {
     ui.add_space(4.0);
     if widgets::secondary_button_wide(
         ui,
-        &icons::with(icons::QR_CODE, "Scan a two-step (2FA) QR code"),
+        &icons::with(icons::QR_CODE, tr("Scan a two-step (2FA) QR code")),
     )
-    .on_hover_text("Show a site's 2FA setup QR code on screen and VaultRust reads it")
+    .on_hover_text(tr(
+        "Show a site's 2FA setup QR code on screen and VaultRust reads it",
+    ))
     .clicked()
     {
         acts.push(Act::ScanQr);
     }
     ui.add_space(20.0);
-    ui.vertical_centered(|ui| ui.label(faint("Or add something else")));
+    ui.vertical_centered(|ui| ui.label(faint(tr("Or add something else"))));
     ui.add_space(2.0);
     let others = [
-        (EntryKind::CreditCard, "Card"),
-        (EntryKind::SecureNote, "Note"),
-        (EntryKind::Identity, "Identity"),
-        (EntryKind::ApiKey, "API key"),
+        (EntryKind::CreditCard, tr("Card")),
+        (EntryKind::SecureNote, tr("Note")),
+        (EntryKind::Identity, tr("Identity")),
+        (EntryKind::ApiKey, tr("API key")),
         (EntryKind::Wifi, "Wi-Fi"),
     ];
     let labels: Vec<&str> = others.iter().map(|(_, l)| *l).collect();

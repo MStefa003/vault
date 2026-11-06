@@ -6,8 +6,10 @@ use super::icons;
 use super::jobs::{Job, Poll};
 use super::theme::*;
 use super::widgets;
+use crate::i18n::tr;
 use crate::prefs::AppPrefs;
 use crate::timeutil::now_unix;
+use crate::trf;
 use crate::update::{self, Release, UpdateError};
 
 /// Automatic checks happen at most this often.
@@ -84,12 +86,12 @@ impl Updates {
                     prefs.save();
                     match r {
                         Ok(Some(rel)) => {
-                            self.status = Some(format!("Version {} is available", rel.version));
+                            self.status = Some(trf!("Version {} is available", rel.version));
                             self.available = Some(rel);
                             self.dismissed = false;
                         }
                         Ok(None) => {
-                            self.status = Some(format!(
+                            self.status = Some(trf!(
                                 "VaultRust {} is the latest version",
                                 update::current_version()
                             ))
@@ -113,7 +115,7 @@ impl Updates {
                 }
                 Poll::Failed => {
                     self.install = None;
-                    message = Some("The update stopped unexpectedly".into());
+                    message = Some(tr("The update stopped unexpectedly").into());
                 }
             }
         }
@@ -145,15 +147,15 @@ impl Updates {
                     egui::Align::Center,
                     |ui| {
                         if self.install.is_some() {
-                            ui.label(dim("Downloading and checking the signature…"));
+                            ui.label(dim(tr("Downloading and checking the signature…")));
                             ui.add(egui::Spinner::new());
                             return;
                         }
-                        if widgets::link_button(ui, "Later").clicked() {
+                        if widgets::link_button(ui, tr("Later")).clicked() {
                             later = true;
                         }
-                        if widgets::primary_button(ui, "Update and restart")
-                            .on_hover_text("Your vault is locked and saved first")
+                        if widgets::primary_button(ui, tr("Update and restart"))
+                            .on_hover_text(tr("Your vault is locked and saved first"))
                             .clicked()
                         {
                             install = true;
@@ -166,14 +168,11 @@ impl Updates {
                                     .color(accent())
                                     .size(17.0),
                             );
-                            ui.label(strong(
-                                format!("VaultRust {} is available", rel.version),
-                                14.0,
-                            ));
+                            ui.label(strong(trf!("VaultRust {} is available", rel.version), 14.0));
                             let notes = rel.notes.trim();
                             if !notes.is_empty() {
                                 let short: String = notes.chars().take(1200).collect();
-                                ui.label(faint("What's new")).on_hover_text(short);
+                                ui.label(faint(tr("What's new"))).on_hover_text(short);
                             }
                         });
                     },
@@ -192,8 +191,8 @@ pub fn settings_row(ui: &mut egui::Ui, updates: &mut Updates, prefs: &mut AppPre
     widgets::switch_row(
         ui,
         &mut auto,
-        "Check for updates automatically",
-        &format!(
+        tr("Check for updates automatically"),
+        &trf!(
             "Once a day, VaultRust asks GitHub ({}) for a newer, signed release. No vault data is sent",
             update::REPO
         ),
@@ -206,16 +205,16 @@ pub fn settings_row(ui: &mut egui::Ui, updates: &mut Updates, prefs: &mut AppPre
     let desc = updates
         .status
         .clone()
-        .unwrap_or_else(|| format!("You have version {}", update::current_version()));
+        .unwrap_or_else(|| trf!("You have version {}", update::current_version()));
     let mut check = false;
     let mut install = false;
-    widgets::setting_row(ui, "Updates", &desc, 200.0, |ui| {
+    widgets::setting_row(ui, tr("Updates"), &desc, 200.0, |ui| {
         if updates.is_busy() {
             ui.add(egui::Spinner::new());
         } else if updates.available.is_some() {
-            install = widgets::primary_button(ui, "Update and restart").clicked();
+            install = widgets::primary_button(ui, tr("Update and restart")).clicked();
         } else {
-            check = widgets::secondary_button(ui, "Check now").clicked();
+            check = widgets::secondary_button(ui, tr("Check now")).clicked();
         }
     });
     if check {

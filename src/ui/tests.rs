@@ -772,6 +772,13 @@ fn render_screenshots() {
         std::env::var("VAULTRUST_SCREENSHOT_DIR").expect("set VAULTRUST_SCREENSHOT_DIR"),
     );
     std::fs::create_dir_all(&out).unwrap();
+    // VAULTRUST_SCREENSHOT_LANG=el renders the Greek interface.
+    if let Some(l) = std::env::var("VAULTRUST_SCREENSHOT_LANG")
+        .ok()
+        .and_then(|k| crate::i18n::Language::from_key(&k))
+    {
+        crate::i18n::set_language(l);
+    }
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("Screenshots.vault");
 
@@ -910,7 +917,30 @@ fn render_screenshots() {
     h.set_size(eframe::egui::vec2(1200.0, 780.0));
     main_state(&mut h).items.new_entry(EntryKind::Login);
     main_state(&mut h).page = Page::Items(Category::Logins);
+    {
+        let ed = main_state(&mut h).items.editor.as_mut().unwrap();
+        ed.entry.fields[0].value = "https://example.com".into();
+        ed.entry.icon = "bank".into();
+        ed.entry.color = 3;
+    }
     shoot(&mut h, "12-editor");
+    let rule = super::modals::SiteRuleState::new("example.com".into(), Default::default(), false);
+    main_state(&mut h).modal = Some(Modal::SiteRule(rule));
+    shoot(&mut h, "12b-site-rules");
+    main_state(&mut h).modal = None;
+    main_state(&mut h).page = Page::Items(Category::All);
+    let picked: Vec<u64> = main_state(&mut h)
+        .vault
+        .data()
+        .entries
+        .iter()
+        .take(4)
+        .map(|e| e.id)
+        .collect();
+    main_state(&mut h).items.pick_many(picked);
+    shoot(&mut h, "12c-bulk-selection");
+    main_state(&mut h).items.clear_picked();
+    main_state(&mut h).items.new_entry(EntryKind::Login);
     main_state(&mut h).modal = Some(Modal::ExportWarning {
         understood: false,
         typed: String::new(),
@@ -967,7 +997,7 @@ fn render_screenshots() {
     h.state_mut().updates.available =
         crate::update::parse_latest(json, crate::update::Version(0, 1, 0)).unwrap();
     shoot(&mut h, "28-update-banner");
-    h.get_by_label("Update and restart");
+    h.get_by_label(crate::i18n::tr("Update and restart"));
     h.state_mut().updates.available = None;
     main_state(&mut h).page = Page::Dashboard;
     main_state(&mut h).modal = Some(Modal::QuickOpen(QuickOpenState::new(false)));
@@ -1017,4 +1047,139 @@ fn unsaved_edits_are_not_discarded_without_asking() {
     assert!(matches!(ms.modal, Some(Modal::DiscardEdits(_))));
     assert!(ms.items.editor.is_some());
     assert_eq!(ms.page, Page::Items(Category::Logins));
+}
+
+#[test]
+fn bulk_actions_change_every_selected_item_and_undo_brings_them_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(unlocked_app(&dir.path().join("ui.vault")));
+    h.step();
+    let ms = main_state(&mut h);
+    ms.page = Page::Items(Category::All);
+    let ids: Vec<u64> = ms
+        .vault
+        .data()
+        .entries
+        .iter()
+        .filter(|e| !e.favorite)
+        .take(3)
+        .map(|e| e.id)
+        .collect();
+    ms.items.pick_many(ids.clone());
+    h.step();
+    h.step();
+    h.get_by_label(&super::icons::with(super::icons::STAR, "Add to favorites"))
+        .click();
+    h.step();
+    h.step();
+    let data = main_state(&mut h).vault.data();
+    assert!(ids.iter().all(|id| data.entry(*id).unwrap().favorite));
+
+    h.get_by_label(&super::icons::with(
+        super::icons::TRASH,
+        "Move 3 items to Trash",
+    ))
+    .click();
+    h.step();
+    h.step();
+    assert!(ids
+        .iter()
+        .all(|id| main_state(&mut h).vault.data().entry(*id).is_none()));
+    h.get_by_label("Undo").click();
+    h.step();
+    h.step();
+    let ms = main_state(&mut h);
+    assert!(ids.iter().all(|id| ms.vault.data().entry(*id).is_some()));
+    assert_eq!(
+        ms.items.picked().len(),
+        3,
+        "the restored items stay selected"
+    );
+}
+
+#[test]
+fn site_rules_shape_generated_passwords() {
+    use crate::generator::GeneratorOptions;
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(unlocked_app(&dir.path().join("ui.vault")));
+    h.step();
+    let ms = main_state(&mut h);
+    let rule = GeneratorOptions {
+        length: 8,
+        uppercase: false,
+        lowercase: false,
+        symbols: false,
+        ..Default::default()
+    };
+    ms.vault
+        .data_mut()
+        .settings
+        .set_site_rule("https://example.com", rule)
+        .unwrap();
+    ms.page = Page::Items(Category::Logins);
+    ms.items.new_entry(EntryKind::Login);
+    ms.items.editor.as_mut().unwrap().entry.fields[0].value =
+        "https://login.example.com/signin".into();
+    h.step();
+    h.step();
+    h.get_by_label(super::icons::DICE_FIVE).click();
+    h.step();
+    let ed = main_state(&mut h).items.editor.as_ref().unwrap();
+    let pw = &ed.entry.fields[3].value;
+    assert_eq!(pw.len(), 8, "{pw}");
+    assert!(pw.chars().all(|c| c.is_ascii_digit()), "{pw}");
+}
+
+#[test]
+fn duplicates_can_be_cleared_from_the_security_page() {
+    let dir = tempfile::tempdir().unwrap();
+    // Tall enough that the section is on screen without scrolling.
+    let mut h = Harness::builder().with_size([1200.0, 2400.0]).build_state(
+        |ctx, app: &mut VaultRustApp| app.frame(ctx),
+        unlocked_app(&dir.path().join("ui.vault")),
+    );
+    h.step();
+    let ms = main_state(&mut h);
+    let mut ids = Vec::new();
+    for (i, title) in ["Shop", "Shop (old)"].into_iter().enumerate() {
+        let mut e = Entry::new(EntryKind::Login);
+        e.title = title.into();
+        e.fields[0].value = "https://shop.example".into();
+        e.fields[1].value = "me".into();
+        e.created = i as i64;
+        ids.push(e.id);
+        ms.vault.data_mut().upsert(e);
+    }
+    // The first one was updated last, so it is the one kept.
+    ms.vault.data_mut().entry_mut(ids[1]).unwrap().modified = 1;
+    ms.page = Page::Security;
+    ms.commit(&mut super::Toasts::default());
+    h.step();
+    h.step();
+    h.get_by_label("Keep the newest, move the others to Trash")
+        .click();
+    h.step();
+    h.step();
+    let ms = main_state(&mut h);
+    let data = ms.vault.data();
+    assert!(data.entry(ids[0]).is_some(), "the newest is kept");
+    assert!(data.entry(ids[1]).is_none());
+}
+
+#[test]
+fn every_page_renders_in_greek() {
+    use crate::i18n::{set_language, Language};
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(unlocked_app(&dir.path().join("ui.vault")));
+    set_language(Language::Greek);
+    h.step();
+    for page in all_pages() {
+        main_state(&mut h).page = page;
+        h.step();
+        h.step();
+    }
+    main_state(&mut h).page = Page::Dashboard;
+    h.step();
+    h.get_by_label(&super::icons::with(super::icons::LOCK, "Κλείδωμα κρύπτης"));
+    set_language(Language::English);
 }

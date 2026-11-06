@@ -21,21 +21,29 @@ pub const MAX_IMPORT_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ImportError {
-    #[error("could not read the file: {0}")]
+    #[error("{}", crate::i18n::format(crate::i18n::tr("could not read the file: {0}"), &[("0", .0)]))]
     Io(#[from] std::io::Error),
-    #[error("the file is larger than 64 MiB")]
+    #[error("{}", crate::i18n::tr("the file is larger than 64 MiB"))]
     TooLarge,
-    #[error("the CSV file could not be parsed: {0}")]
+    #[error("{}", crate::i18n::format(crate::i18n::tr("the CSV file could not be parsed: {0}"), &[("0", .0)]))]
     Csv(String),
-    #[error("the JSON file could not be parsed: {0}")]
+    #[error("{}", crate::i18n::format(crate::i18n::tr("the JSON file could not be parsed: {0}"), &[("0", .0)]))]
     Json(String),
-    #[error("unrecognised format: no title, URL, username or password column was found")]
+    #[error(
+        "{}",
+        crate::i18n::tr(
+            "unrecognised format: no title, URL, username or password column was found"
+        )
+    )]
     Unrecognised,
-    #[error("this is an encrypted export; please export unencrypted JSON from the other application, import it, then delete it")]
+    #[error("{}", crate::i18n::tr("this is an encrypted export; please export unencrypted JSON from the other application, import it, then delete it"))]
     EncryptedExport,
-    #[error("this is a KeePass database; it needs its password to import")]
+    #[error(
+        "{}",
+        crate::i18n::tr("this is a KeePass database; it needs its password to import")
+    )]
     KdbxNeedsPassword,
-    #[error("{0}")]
+    #[error(transparent)]
     Kdbx(#[from] crate::kdbx::KdbxError),
 }
 
@@ -249,19 +257,39 @@ impl FlatItem {
         } else if !self.username.is_empty() {
             self.username.clone()
         } else {
-            "Imported item".into()
+            crate::i18n::tr("Imported item").into()
         };
         e.notes = self.notes.clone();
         for t in self.tags.split([';', ',']) {
             e.add_tag(t);
         }
-        set_or_add(&mut e, FieldKind::Url, "Website", &self.url);
-        set_or_add(&mut e, FieldKind::Username, "Username", &self.username);
-        set_or_add(&mut e, FieldKind::Email, "Email", &self.email);
-        set_or_add(&mut e, FieldKind::Password, "Password", &self.password);
+        set_or_add(
+            &mut e,
+            FieldKind::Url,
+            crate::i18n::tr("Website"),
+            &self.url,
+        );
+        set_or_add(
+            &mut e,
+            FieldKind::Username,
+            crate::i18n::tr("Username"),
+            &self.username,
+        );
+        set_or_add(
+            &mut e,
+            FieldKind::Email,
+            crate::i18n::tr("Email"),
+            &self.email,
+        );
+        set_or_add(
+            &mut e,
+            FieldKind::Password,
+            crate::i18n::tr("Password"),
+            &self.password,
+        );
         if !self.totp.is_empty() {
             e.fields.push(Field::with_value(
-                "One-time code",
+                crate::i18n::tr("One-time code"),
                 FieldKind::Totp,
                 &self.totp,
             ));
@@ -275,7 +303,7 @@ impl FlatItem {
                 if let Some(f) = e
                     .fields
                     .iter_mut()
-                    .find(|f| f.label == label && f.value.is_empty())
+                    .find(|f| crate::i18n::is_any(&f.label, label) && f.value.is_empty())
                 {
                     f.value = value.to_string();
                 } else {
@@ -395,7 +423,12 @@ fn set_label(e: &mut Entry, label: &str, value: &str) {
     if value.is_empty() {
         return;
     }
-    if let Some(f) = e.fields.iter_mut().find(|f| f.label == label) {
+    // Template field names may be in another language than `label`.
+    if let Some(f) = e
+        .fields
+        .iter_mut()
+        .find(|f| crate::i18n::is_any(&f.label, label))
+    {
         f.value = value.to_string();
     }
 }
@@ -412,7 +445,7 @@ fn bitwarden_item(item: &Value) -> Option<Entry> {
                 .and_then(|a| a.first())
                 .map(|u| s(u, &["uri"]))
                 .unwrap_or("");
-            set_or_add(&mut e, FieldKind::Url, "Website", uri);
+            set_or_add(&mut e, FieldKind::Url, crate::i18n::tr("Website"), uri);
             set_or_add(
                 &mut e,
                 FieldKind::Username,
@@ -427,8 +460,11 @@ fn bitwarden_item(item: &Value) -> Option<Entry> {
             );
             let totp = s(item, &["login", "totp"]);
             if !totp.is_empty() {
-                e.fields
-                    .push(Field::with_value("One-time code", FieldKind::Totp, totp));
+                e.fields.push(Field::with_value(
+                    crate::i18n::tr("One-time code"),
+                    FieldKind::Totp,
+                    totp,
+                ));
             }
             e
         }
@@ -498,7 +534,7 @@ fn bitwarden_item(item: &Value) -> Option<Entry> {
         }
         _ => {
             let mut e = Entry::new(EntryKind::Custom);
-            e.title = "Imported item".into();
+            e.title = crate::i18n::tr("Imported item").into();
             e
         }
     };
@@ -506,7 +542,7 @@ fn bitwarden_item(item: &Value) -> Option<Entry> {
     if !name.is_empty() {
         e.title = name.to_string();
     } else if e.title.is_empty() {
-        e.title = "Imported item".into();
+        e.title = crate::i18n::tr("Imported item").into();
     }
     e.notes = s(item, &["notes"]).to_string();
     e.favorite = item

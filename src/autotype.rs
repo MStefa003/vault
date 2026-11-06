@@ -228,7 +228,7 @@ fn resolve(e: &Entry, tokens: &[Token], now: i64) -> Result<Vec<TypeStep>, Strin
                     .iter()
                     .find(|f| f.label.eq_ignore_ascii_case(label) && !f.value.is_empty())
                     .map(|f| f.value.as_str())
-                    .ok_or_else(|| format!("This item has no “{label}” field"))?,
+                    .ok_or_else(|| crate::trf!("This item has no “{label}” field", label))?,
             ),
             Token::Tab => TypeStep::Tab,
             Token::Enter => TypeStep::Enter,
@@ -244,7 +244,7 @@ fn resolve(e: &Entry, tokens: &[Token], now: i64) -> Result<Vec<TypeStep>, Strin
 pub fn build(e: &Entry, seq: Sequence, now: i64) -> Result<Vec<TypeStep>, String> {
     if seq == Sequence::Login && !e.auto_type.trim().is_empty() {
         let tokens = parse_sequence(&e.auto_type)
-            .map_err(|err| format!("This item's auto-type sequence is invalid: {err}"))?;
+            .map_err(|err| crate::trf!("This item's auto-type sequence is invalid: {err}", err))?;
         return resolve(e, &tokens, now);
     }
     let text = |s: &str| TypeStep::Text(Zeroizing::new(s.to_string()));

@@ -10,11 +10,19 @@ use zeroize::{Zeroize, Zeroizing};
 /// Why no code was found.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ScanError {
-    #[error("couldn't take a screenshot")]
+    #[error("{}", crate::i18n::tr("couldn't take a screenshot"))]
     Capture,
-    #[error("no QR code found on screen — make sure the whole code is visible, then try again")]
+    #[error(
+        "{}",
+        crate::i18n::tr(
+            "no QR code found on screen — make sure the whole code is visible, then try again"
+        )
+    )]
     NoCode,
-    #[error("found a QR code, but it isn't a two-step verification code")]
+    #[error(
+        "{}",
+        crate::i18n::tr("found a QR code, but it isn't a two-step verification code")
+    )]
     NotOtp,
 }
 

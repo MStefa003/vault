@@ -16,10 +16,12 @@ use super::widgets;
 use super::{dashboard, security_page, trash_page, Services, Toasts, Transition};
 use crate::analysis::{analyze, HealthReport, PasswordRef};
 use crate::error::VaultError;
+use crate::i18n::tr;
 use crate::model::{EntryKind, FieldKind};
 use crate::session::AutoLock;
 use crate::storage::with_vault_extension;
 use crate::timeutil::{file_stamp, now_unix};
+use crate::trf;
 use crate::vault::UnlockedVault;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,7 +175,7 @@ impl MainState {
             .data_mut()
             .log(crate::model::AuditKind::HelloDisabled, "");
         self.commit(svc.toasts);
-        svc.toasts.info("Windows Hello unlock is off");
+        svc.toasts.info(tr("Windows Hello unlock is off"));
     }
 
     fn poll_hello(&mut self, svc: &mut Services) {
@@ -188,11 +190,11 @@ impl MainState {
                     .log(crate::model::AuditKind::HelloEnabled, "");
                 self.commit(svc.toasts);
                 svc.toasts
-                    .success("Windows Hello can now unlock this vault");
+                    .success(tr("Windows Hello can now unlock this vault"));
             }
             Poll::Done(Err(crate::hello::HelloError::Cancelled)) => {
                 self.hello_job = None;
-                svc.toasts.info("Windows Hello was cancelled");
+                svc.toasts.info(tr("Windows Hello was cancelled"));
             }
             Poll::Done(Err(e)) => {
                 self.hello_job = None;
@@ -200,7 +202,7 @@ impl MainState {
             }
             Poll::Failed => {
                 self.hello_job = None;
-                svc.toasts.error("Windows Hello stopped unexpectedly");
+                svc.toasts.error(tr("Windows Hello stopped unexpectedly"));
             }
         }
     }
@@ -252,11 +254,11 @@ impl MainState {
             Poll::Done(Ok(())) => self.auto_type_job = None,
             Poll::Done(Err(e)) => {
                 self.auto_type_job = None;
-                svc.toasts.error(format!("Auto-type: {e}"));
+                svc.toasts.error(trf!("Auto-type: {e}", e));
             }
             Poll::Failed => {
                 self.auto_type_job = None;
-                svc.toasts.error("Auto-type stopped unexpectedly");
+                svc.toasts.error(tr("Auto-type stopped unexpectedly"));
             }
         }
     }
@@ -273,7 +275,7 @@ impl MainState {
                 false
             }
             Err(e) => {
-                toasts.error(format!("Couldn't save the vault: {e}"));
+                toasts.error(trf!("Couldn't save the vault: {e}", e));
                 false
             }
         };
@@ -283,7 +285,7 @@ impl MainState {
 
     fn report_auto_backup(&mut self, toasts: &mut Toasts) {
         if let Some(e) = self.vault.take_auto_backup_warning() {
-            toasts.error(format!("Saved, but the automatic backup failed: {e}"));
+            toasts.error(trf!("Saved, but the automatic backup failed: {e}", e));
         }
     }
 
@@ -294,10 +296,10 @@ impl MainState {
         }
         match self.vault.save() {
             Ok(()) => {}
-            Err(VaultError::ModifiedExternally) => toasts.error(
+            Err(VaultError::ModifiedExternally) => toasts.error(tr(
                 "Your last settings change wasn't saved: the vault file was changed elsewhere.",
-            ),
-            Err(e) => toasts.error(format!("Couldn't save the vault: {e}")),
+            )),
+            Err(e) => toasts.error(trf!("Couldn't save the vault: {e}", e)),
         }
         self.report_auto_backup(toasts);
     }
@@ -329,7 +331,7 @@ impl MainState {
                 }
                 Poll::Failed => {
                     self.breach.report = Some(BreachReport {
-                        error: Some("The breach check stopped unexpectedly.".into()),
+                        error: Some(tr("The breach check stopped unexpectedly.").into()),
                         ..Default::default()
                     });
                 }
@@ -374,7 +376,7 @@ impl MainState {
                         error: None,
                     },
                     Err(e) => BreachReport {
-                        error: Some(format!("Couldn't read the breached-password list: {e}")),
+                        error: Some(trf!("Couldn't read the breached-password list: {e}", e)),
                         ..Default::default()
                     },
                 }
@@ -397,8 +399,8 @@ impl MainState {
         {
             Ok(()) => svc
                 .toasts
-                .success(format!("{what} copied — clears in {secs} s")),
-            Err(e) => svc.toasts.error(format!("Clipboard unavailable: {e}")),
+                .success(trf!("{what} copied — clears in {secs} s", what, secs)),
+            Err(e) => svc.toasts.error(trf!("Clipboard unavailable: {e}", e)),
         }
     }
 
@@ -411,11 +413,39 @@ impl MainState {
             self.items.editor = None;
             if self.commit(svc.toasts) {
                 svc.toasts.with_action(
-                    "Moved to Trash",
-                    "Undo",
+                    tr("Moved to Trash"),
+                    tr("Undo"),
                     super::toast::ToastAction::RestoreEntry(id),
                 );
             }
+        }
+    }
+
+    /// Move several entries to the trash at once, with one Undo.
+    pub fn trash_many(&mut self, svc: &mut Services, ids: &[u64]) {
+        let moved: Vec<u64> = ids
+            .iter()
+            .copied()
+            .filter(|id| self.vault.data_mut().trash_entry(*id))
+            .collect();
+        if moved.is_empty() {
+            return;
+        }
+        if self.items.selected.is_some_and(|s| moved.contains(&s)) {
+            self.items.selected = None;
+        }
+        self.items.clear_picked();
+        self.items.editor = None;
+        if self.commit(svc.toasts) {
+            svc.toasts.with_action(
+                crate::i18n::plural(
+                    moved.len(),
+                    tr("Moved {n} item to Trash"),
+                    tr("Moved {n} items to Trash"),
+                ),
+                crate::i18n::tr("Undo"),
+                super::toast::ToastAction::RestoreEntries(moved),
+            );
         }
     }
 
@@ -433,7 +463,7 @@ impl MainState {
             }
             Poll::Failed => {
                 self.qr_job = None;
-                svc.toasts.error("The QR scanner stopped unexpectedly");
+                svc.toasts.error(tr("The QR scanner stopped unexpectedly"));
             }
         }
     }
@@ -450,7 +480,7 @@ impl MainState {
                 Some(f) => f.value = uri.to_string(),
                 None => e
                     .fields
-                    .push(Field::with_value("One-time code", FieldKind::Totp, uri)),
+                    .push(Field::with_value(tr("One-time code"), FieldKind::Totp, uri)),
             }
             if e.title.trim().is_empty() {
                 e.title = issuer.clone();
@@ -472,15 +502,16 @@ impl MainState {
             }
         };
         let site = if issuer.is_empty() {
-            "this account".to_string()
+            tr("this account").to_string()
         } else {
             issuer.clone()
         };
 
         if let Some(ed) = self.items.editor.as_mut() {
             set_code(&mut ed.entry);
-            svc.toasts.success(format!(
-                "Two-step code for {site} added — press Save to keep it"
+            svc.toasts.success(trf!(
+                "Two-step code for {site} added — press Save to keep it",
+                site
             ));
             return;
         }
@@ -494,7 +525,7 @@ impl MainState {
                 set_code(&mut entry);
                 self.items.select(id);
                 self.items.editor = Some(entries::Editor::prefilled(original, entry, false));
-                svc.toasts.success(format!(
+                svc.toasts.success(trf!(
                     "Two-step code added to “{}” — press Save to keep it",
                     self.vault
                         .data()
@@ -509,8 +540,9 @@ impl MainState {
                 set_code(&mut entry);
                 self.items.selected = None;
                 self.items.editor = Some(entries::Editor::prefilled(blank, entry, true));
-                svc.toasts.success(format!(
-                    "New login for {site} with its two-step code — add the password and Save"
+                svc.toasts.success(trf!(
+                    "New login for {site} with its two-step code — add the password and Save",
+                    site
                 ));
             }
         }
@@ -562,16 +594,33 @@ impl MainState {
                 }
             }
         }
-        if let Some(super::toast::ToastAction::RestoreEntry(id)) = svc.toasts.take_clicked() {
-            if self.vault.data_mut().restore_entry(id) && self.commit(svc.toasts) {
-                svc.toasts.info("Restored");
+        use super::toast::ToastAction;
+        match svc.toasts.take_clicked() {
+            Some(ToastAction::RestoreEntry(id)) => {
                 // Restoring may give the item a new id if the old one is
-                // taken; the restored item is the last one added.
-                if let Some(e) = self.vault.data().entries.last() {
-                    let id = e.id;
-                    self.items.select(id);
+                // taken.
+                if let Some(id) = self.vault.data_mut().restore_entry_id(id) {
+                    if self.commit(svc.toasts) {
+                        svc.toasts.info(tr("Restored"));
+                        self.items.select(id);
+                    }
                 }
             }
+            Some(ToastAction::RestoreEntries(ids)) => {
+                let restored: Vec<u64> = ids
+                    .iter()
+                    .filter_map(|id| self.vault.data_mut().restore_entry_id(*id))
+                    .collect();
+                if !restored.is_empty() && self.commit(svc.toasts) {
+                    svc.toasts.info(crate::i18n::plural(
+                        restored.len(),
+                        tr("Restored {n} item"),
+                        tr("Restored {n} items"),
+                    ));
+                    self.items.pick_many(restored);
+                }
+            }
+            None => {}
         }
     }
 
@@ -600,6 +649,7 @@ impl MainState {
             Nav::Page(p) => {
                 if p != self.page {
                     self.items.editor = None;
+                    self.items.clear_picked();
                 }
                 self.page = p;
             }
@@ -636,8 +686,8 @@ impl MainState {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "vault".into());
         let mut dlg = rfd::FileDialog::new()
-            .set_title("Save encrypted backup")
-            .add_filter("VaultRust vault", &["vault"])
+            .set_title(tr("Save encrypted backup"))
+            .add_filter(tr("VaultRust vault"), &["vault"])
             .set_file_name(format!("{stem}-backup-{}.vault", file_stamp(now_unix())));
         if let Some(dir) = self.vault.path().parent() {
             dlg = dlg.set_directory(dir);
@@ -665,7 +715,7 @@ impl MainState {
                     .data_mut()
                     .log(crate::model::AuditKind::BackupCreated, &name);
                 self.commit(svc.toasts);
-                svc.toasts.success(format!(
+                svc.toasts.success(trf!(
                     "Backup saved and verified: {}",
                     path.file_name()
                         .map(|n| n.to_string_lossy().into_owned())
@@ -673,7 +723,7 @@ impl MainState {
                 ));
             }
             Err(VaultError::ModifiedExternally) => self.modal = Some(Modal::ExternalChange),
-            Err(e) => svc.toasts.error(format!("Backup failed: {e}")),
+            Err(e) => svc.toasts.error(trf!("Backup failed: {e}", e)),
         }
     }
 
@@ -712,14 +762,14 @@ impl MainState {
             u64::from(settings.auto_lock_minutes) * 60,
         ));
         if self.autolock.should_lock(now) {
-            svc.toasts.info("Locked after inactivity");
+            svc.toasts.info(tr("Locked after inactivity"));
             return Some(Transition::Lock);
         }
         if settings.lock_on_minimize && ctx.input(|i| i.viewport().minimized.unwrap_or(false)) {
             return Some(Transition::Lock);
         }
         if settings.lock_on_session_lock && self.session_locked(now) {
-            svc.toasts.info("Locked because Windows was locked");
+            svc.toasts.info(tr("Locked because Windows was locked"));
             return Some(Transition::Lock);
         }
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::L)) {
@@ -807,7 +857,7 @@ impl MainState {
             .show_separator_line(false)
             .show_inside(ui, |ui| {
                 ui.add_space(6.0);
-                if widgets::secondary_button_wide(ui, &icons::with(icons::LOCK, "Lock vault"))
+                if widgets::secondary_button_wide(ui, &icons::with(icons::LOCK, tr("Lock vault")))
                     .on_hover_text("Ctrl+L")
                     .clicked()
                 {
@@ -815,7 +865,7 @@ impl MainState {
                 }
                 let rem = self.autolock.remaining(now).as_secs();
                 ui.vertical_centered(|ui| {
-                    ui.label(faint(format!("Locks in {}:{:02}", rem / 60, rem % 60)));
+                    ui.label(faint(trf!("Locks in {}:{:02}", rem / 60, rem % 60)));
                 });
             });
 
@@ -843,9 +893,9 @@ impl MainState {
                                 nav = Some(Nav::Page(page));
                             }
                         };
-                        item(ui, icons::HOUSE, "Overview", None, Page::Dashboard);
+                        item(ui, icons::HOUSE, tr("Overview"), None, Page::Dashboard);
                         ui.add_space(10.0);
-                        ui.label(section_label("    Vault"));
+                        ui.label(section_label(tr("    Vault")));
                         ui.add_space(2.0);
                         let data = self.vault.data();
                         for c in Category::ALL {
@@ -863,7 +913,7 @@ impl MainState {
                         let tags = data.tags();
                         if !tags.is_empty() {
                             ui.add_space(10.0);
-                            ui.label(section_label("    Tags"));
+                            ui.label(section_label(tr("    Tags")));
                             ui.add_space(2.0);
                             for (tag, n) in tags {
                                 item(
@@ -876,9 +926,9 @@ impl MainState {
                             }
                         }
                         ui.add_space(10.0);
-                        ui.label(section_label("    Tools"));
+                        ui.label(section_label(tr("    Tools")));
                         ui.add_space(2.0);
-                        item(ui, icons::DICE_FIVE, "Generator", None, Page::Generator);
+                        item(ui, icons::DICE_FIVE, tr("Generator"), None, Page::Generator);
                         let breached = self.breach.report.as_ref().map_or(0, |r| r.hits.len());
                         let expired = self.health.expired.len();
                         let issues = self.health.weak.len()
@@ -890,11 +940,17 @@ impl MainState {
                             let urgent = breached > 0 || expired > 0;
                             (issues.to_string(), if urgent { danger() } else { warn() })
                         });
-                        item(ui, icons::SHIELD_CHECK, "Security", badge, Page::Security);
+                        item(
+                            ui,
+                            icons::SHIELD_CHECK,
+                            tr("Security"),
+                            badge,
+                            Page::Security,
+                        );
                         let trashed = self.vault.data().trash.len();
                         let badge = (trashed > 0).then(|| (trashed.to_string(), text_faint()));
-                        item(ui, icons::TRASH, "Trash", badge, Page::Trash);
-                        item(ui, icons::GEAR_SIX, "Settings", None, Page::Settings);
+                        item(ui, icons::TRASH, tr("Trash"), badge, Page::Trash);
+                        item(ui, icons::GEAR_SIX, tr("Settings"), None, Page::Settings);
                     });
             });
         if let Some(n) = nav {

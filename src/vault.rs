@@ -720,6 +720,9 @@ pub(crate) fn decode_payload(plain: &[u8]) -> Result<VaultData> {
         5 => postcard::from_bytes::<crate::model::v5::VaultDataV5>(body)
             .map_err(|_| VaultError::Decode)?
             .upgrade(),
+        6 => postcard::from_bytes::<crate::model::v6::VaultDataV6>(body)
+            .map_err(|_| VaultError::Decode)?
+            .upgrade(),
         SCHEMA_VERSION => postcard::from_bytes(body).map_err(|_| VaultError::Decode)?,
         _ => {
             return Err(VaultError::Invalid(
@@ -880,7 +883,7 @@ mod tests {
             name: "v4".into(),
             created: 9,
             entries: vec![entry(1, "live")],
-            settings: crate::model::VaultSettings {
+            settings: crate::model::v4::VaultSettingsV4 {
                 auto_backup_count: 7,
                 ..Default::default()
             },
@@ -933,7 +936,7 @@ mod tests {
             name: "v5".into(),
             created: 9,
             entries: vec![entry(1, "live")],
-            settings: crate::model::VaultSettings::default(),
+            settings: crate::model::v4::VaultSettingsV4::default(),
             last_backup: 11,
             trash: vec![TrashedEntryV5 {
                 entry: entry(2, "binned"),
@@ -955,6 +958,67 @@ mod tests {
         assert!(e.attachments.is_empty());
         assert_eq!(d.trash[0].entry.title, "binned");
         assert_eq!(d.audit[0].detail, "x.csv");
+        assert_eq!(decode_payload(&encode_payload(&d).unwrap()).unwrap(), d);
+    }
+
+    #[test]
+    fn schema_v6_payload_is_upgraded() {
+        use crate::model::v6::{EntryV6, TrashedEntryV6, VaultDataV6};
+        use crate::model::Attachment;
+        let entry = |id: u64| EntryV6 {
+            id,
+            kind: EntryKind::Login,
+            title: "six".into(),
+            fields: vec![Field::with_value("Password", FieldKind::Password, "pw")],
+            notes: String::new(),
+            favorite: false,
+            created: 1,
+            modified: 2,
+            password_changed: 3,
+            tags: Vec::new(),
+            history: Vec::new(),
+            last_used: 4,
+            expires: 5,
+            auto_type: String::new(),
+            attachments: vec![Attachment {
+                name: "a.txt".into(),
+                data: vec![1, 2, 3],
+                added: 6,
+            }],
+        };
+        let old = VaultDataV6 {
+            schema: 6,
+            name: "v6".into(),
+            created: 9,
+            entries: vec![entry(1)],
+            settings: crate::model::v4::VaultSettingsV4 {
+                auto_lock_minutes: 33,
+                ..Default::default()
+            },
+            last_backup: 11,
+            trash: vec![TrashedEntryV6 {
+                entry: entry(2),
+                deleted: 12,
+            }],
+            audit: Vec::new(),
+        };
+        let body = postcard::to_allocvec(&old).unwrap();
+        let mut plain = (body.len() as u32).to_le_bytes().to_vec();
+        plain.extend_from_slice(&body);
+        let mut d = decode_payload(&plain).unwrap();
+        assert_eq!(d.schema, SCHEMA_VERSION);
+        assert_eq!(d.settings.auto_lock_minutes, 33);
+        assert!(d.settings.site_rules.is_empty());
+        let e = &d.entries[0];
+        assert_eq!(e.attachments[0].data, [1, 2, 3]);
+        assert_eq!((e.icon.as_str(), e.color), ("", 0));
+        assert_eq!(d.trash[0].entry.id, 2);
+        // The new fields round-trip.
+        d.entries[0].icon = "bank".into();
+        d.entries[0].color = 3;
+        d.settings
+            .set_site_rule("example.com", Default::default())
+            .unwrap();
         assert_eq!(decode_payload(&encode_payload(&d).unwrap()).unwrap(), d);
     }
 

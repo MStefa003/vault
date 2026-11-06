@@ -88,26 +88,26 @@ pub fn file_stamp(ts: i64) -> String {
 pub fn age_description(ts: i64, now: i64) -> String {
     let days = (now - ts).max(0) / 86_400;
     match days {
-        0 => "today".into(),
-        1 => "yesterday".into(),
-        2..=59 => format!("{days} days ago"),
-        60..=729 => format!("{} months ago", days / 30),
-        _ => format!("{} years ago", days / 365),
+        0 => crate::i18n::tr("today").into(),
+        1 => crate::i18n::tr("yesterday").into(),
+        2..=59 => crate::trf!("{days} days ago", days),
+        60..=729 => crate::trf!("{} months ago", days / 30),
+        _ => crate::trf!("{} years ago", days / 365),
     }
 }
 
 /// "Expires in 5 days", "Expires today", "Expired 3 days ago".
 pub fn expiry_description(at: i64, now: i64) -> String {
     if at <= now {
-        return format!("Expired {}", age_description(at, now));
+        return crate::trf!("Expired {}", age_description(at, now));
     }
     let days = (at - now) / 86_400;
     match days {
-        0 => "Expires today".into(),
-        1 => "Expires tomorrow".into(),
-        2..=59 => format!("Expires in {days} days"),
-        60..=729 => format!("Expires in {} months", days / 30),
-        _ => format!("Expires {}", format_date(at)),
+        0 => crate::i18n::tr("Expires today").into(),
+        1 => crate::i18n::tr("Expires tomorrow").into(),
+        2..=59 => crate::trf!("Expires in {days} days", days),
+        60..=729 => crate::trf!("Expires in {} months", days / 30),
+        _ => crate::trf!("Expires {}", format_date(at)),
     }
 }
 

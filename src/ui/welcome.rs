@@ -8,14 +8,16 @@ use super::icons;
 use super::theme::*;
 use super::widgets::{self, centered_column};
 use super::{Services, Transition};
+use crate::i18n::tr;
+use crate::trf;
 
 pub struct WelcomeState;
 
 pub fn pick_vault_file() -> Option<PathBuf> {
     rfd::FileDialog::new()
-        .set_title("Open vault")
-        .add_filter("VaultRust vault", &["vault"])
-        .add_filter("All files", &["*"])
+        .set_title(tr("Open vault"))
+        .add_filter(tr("VaultRust vault"), &["vault"])
+        .add_filter(tr("All files"), &["*"])
         .pick_file()
 }
 
@@ -42,13 +44,13 @@ pub fn show(ctx: &egui::Context, _s: &mut WelcomeState, svc: &mut Services) -> O
                             ui.add_space(12.0);
                             ui.label(strong("VaultRust", 24.0));
                             ui.add_space(2.0);
-                            ui.label(dim("Your passwords, encrypted on this computer."));
+                            ui.label(dim(tr("Your passwords, encrypted on this computer.")));
                         });
                         ui.add_space(28.0);
 
                         if widgets::primary_button_wide(
                             ui,
-                            &icons::with(icons::PLUS, "Create a new vault"),
+                            &icons::with(icons::PLUS, tr("Create a new vault")),
                             true,
                         )
                         .clicked()
@@ -58,7 +60,7 @@ pub fn show(ctx: &egui::Context, _s: &mut WelcomeState, svc: &mut Services) -> O
                         ui.add_space(2.0);
                         if widgets::secondary_button_wide(
                             ui,
-                            &icons::with(icons::FOLDER_OPEN, "Open a vault file…"),
+                            &icons::with(icons::FOLDER_OPEN, tr("Open a vault file…")),
                         )
                         .clicked()
                         {
@@ -69,7 +71,7 @@ pub fn show(ctx: &egui::Context, _s: &mut WelcomeState, svc: &mut Services) -> O
 
                         if !svc.recent.paths.is_empty() {
                             ui.add_space(26.0);
-                            ui.label(section_label("RECENT VAULTS"));
+                            ui.label(section_label(tr("RECENT VAULTS")));
                             ui.add_space(2.0);
                             let mut remove = None;
                             ui.spacing_mut().item_spacing.y = 2.0;
@@ -140,7 +142,7 @@ fn recent_row(ui: &mut egui::Ui, path: &Path) -> RowAction {
         if exists {
             dir
         } else {
-            format!("Missing — {dir}")
+            trf!("Missing — {dir}", dir)
         },
         FontId::proportional(11.5),
         text_faint(),
@@ -159,7 +161,7 @@ fn recent_row(ui: &mut egui::Ui, path: &Path) -> RowAction {
         );
     }
     let remove = remove
-        .on_hover_text("Remove from this list (the file is kept)")
+        .on_hover_text(tr("Remove from this list (the file is kept)"))
         .on_hover_cursor(CursorIcon::PointingHand);
     if remove.clicked() {
         return RowAction::Remove;

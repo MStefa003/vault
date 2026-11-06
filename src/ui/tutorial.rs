@@ -7,7 +7,9 @@ use eframe::egui::{self, Align2, FontId, Id, Key, RichText, Sense, Vec2};
 use super::icons;
 use super::theme::*;
 use super::widgets;
+use crate::i18n::tr;
 use crate::os_protect::{AUTO_TYPE_HOTKEY, QUICK_OPEN_HOTKEY};
+use crate::trf;
 
 struct Step {
     icon: &'static str,
@@ -20,93 +22,93 @@ fn steps() -> Vec<Step> {
     vec![
         Step {
             icon: icons::VAULT,
-            title: "Welcome to VaultRust",
-            text: "Your passwords are kept in one encrypted file on this computer. Nothing is uploaded anywhere."
+            title: tr("Welcome to VaultRust"),
+            text: tr("Your passwords are kept in one encrypted file on this computer. Nothing is uploaded anywhere.")
                 .into(),
             tips: vec![
                 (
                     icons::KEY,
-                    "Your master password unlocks everything. Nobody can reset it, so keep it somewhere you won't lose it."
+                    tr("Your master password unlocks everything. Nobody can reset it, so keep it somewhere you won't lose it.")
                         .into(),
                 ),
                 (
                     icons::FLOPPY_DISK,
-                    "Use Back up now and then to keep a copy on a USB stick or another drive.".into(),
+                    tr("Use Back up now and then to keep a copy on a USB stick or another drive.").into(),
                 ),
             ],
         },
         Step {
             icon: icons::PLUS_CIRCLE,
-            title: "Save your logins",
-            text: "Click New item → Login and fill in the website, username and password.".into(),
+            title: tr("Save your logins"),
+            text: tr("Click New item → Login and fill in the website, username and password.").into(),
             tips: vec![
-                (icons::DICE_FIVE, "The dice button makes a strong password for you.".into()),
+                (icons::DICE_FIVE, tr("The dice button makes a strong password for you.").into()),
                 (
                     icons::TEXT_AA,
-                    "Leave the title empty and the item is named after its website.".into(),
+                    tr("Leave the title empty and the item is named after its website.").into(),
                 ),
                 (
                     icons::DOWNLOAD_SIMPLE,
-                    "Coming from Chrome, Edge or another password manager? Import brings everything over."
+                    tr("Coming from Chrome, Edge or another password manager? Import brings everything over.")
                         .into(),
                 ),
             ],
         },
         Step {
             icon: icons::COPY,
-            title: "Use a password",
-            text: "Open an item, or hover it on the Overview, and click the copy button next to the username or password."
+            title: tr("Use a password"),
+            text: tr("Open an item, or hover it on the Overview, and click the copy button next to the username or password.")
                 .into(),
             tips: vec![
                 (
                     icons::CLOCK_COUNTDOWN,
-                    "Copied passwords are wiped from the clipboard after 30 seconds.".into(),
+                    tr("Copied passwords are wiped from the clipboard after 30 seconds.").into(),
                 ),
                 (
                     icons::MAGNIFYING_GLASS,
-                    format!("Ctrl+K searches the vault. {QUICK_OPEN_HOTKEY} opens the search from any app."),
+                    trf!("Ctrl+K searches the vault. {QUICK_OPEN_HOTKEY} opens the search from any app.", QUICK_OPEN_HOTKEY),
                 ),
             ],
         },
         Step {
             icon: icons::KEYBOARD,
-            title: "Log in without copying",
-            text: format!(
+            title: tr("Log in without copying"),
+            text: trf!(
                 "Click into a login form in your browser or any app, press {AUTO_TYPE_HOTKEY} and pick the account. \
-                 VaultRust types the username and password for you."
+                 VaultRust types the username and password for you.", AUTO_TYPE_HOTKEY
             ),
             tips: vec![(
                 icons::LIGHTBULB,
-                "Accounts for the website you're on are listed first.".into(),
+                tr("Accounts for the website you're on are listed first.").into(),
             )],
         },
         Step {
             icon: icons::QR_CODE,
-            title: "Two-step codes",
-            text: "When a site shows a QR code to set up two-step verification, click Scan 2FA code. \
-                   VaultRust reads it from your screen and shows the 6-digit code whenever you need it."
+            title: tr("Two-step codes"),
+            text: tr("When a site shows a QR code to set up two-step verification, click Scan 2FA code. \
+                   VaultRust reads it from your screen and shows the 6-digit code whenever you need it.")
                 .into(),
             tips: vec![(
                 icons::DEVICE_MOBILE_SLASH,
-                "No phone needed — the code is copied like a password.".into(),
+                tr("No phone needed — the code is copied like a password.").into(),
             )],
         },
         Step {
             icon: icons::SHIELD_CHECK,
-            title: "Stay safe",
-            text: "VaultRust keeps an eye on things for you.".into(),
+            title: tr("Stay safe"),
+            text: tr("VaultRust keeps an eye on things for you.").into(),
             tips: vec![
                 (
                     icons::WARNING,
-                    "The Security page lists weak, reused and old passwords.".into(),
+                    tr("The Security page lists weak, reused and old passwords.").into(),
                 ),
                 (
                     icons::LOCK,
-                    "The vault locks itself after a few idle minutes and when Windows locks.".into(),
+                    tr("The vault locks itself after a few idle minutes and when Windows locks.").into(),
                 ),
                 (
                     icons::FINGERPRINT,
-                    "Turn on Windows Hello in Settings to unlock with your face, fingerprint or PIN."
+                    tr("Turn on Windows Hello in Settings to unlock with your face, fingerprint or PIN.")
                         .into(),
                 ),
             ],
@@ -156,7 +158,7 @@ pub fn show(ctx: &egui::Context, tour: &mut Tour) -> bool {
         ui.horizontal(|ui| {
             ui.label(faint(format!("{} of {}", tour.step + 1, steps.len())));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if tour.step < last && widgets::link_button(ui, "Skip tour").clicked() {
+                if tour.step < last && widgets::link_button(ui, tr("Skip tour")).clicked() {
                     done = true;
                 }
             });
@@ -207,9 +209,9 @@ pub fn show(ctx: &egui::Context, tour: &mut Tour) -> bool {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let label = if tour.step == last {
-                    "Get started"
+                    tr("Get started")
                 } else {
-                    "Next"
+                    tr("Next")
                 };
                 if widgets::primary_button(ui, label).clicked() {
                     if tour.step == last {
@@ -218,7 +220,7 @@ pub fn show(ctx: &egui::Context, tour: &mut Tour) -> bool {
                         tour.step += 1;
                     }
                 }
-                if tour.step > 0 && widgets::secondary_button(ui, "Back").clicked() {
+                if tour.step > 0 && widgets::secondary_button(ui, tr("Back")).clicked() {
                     tour.step -= 1;
                 }
             });

@@ -14,7 +14,9 @@ use super::{Services, Transition};
 use crate::analysis::estimate_strength;
 use crate::crypto::{KdfParams, KeyFile};
 use crate::error::VaultError;
+use crate::i18n::tr;
 use crate::storage::{self, with_vault_extension, WriteMode};
+use crate::trf;
 use crate::vault::{Credentials, UnlockedVault, MIN_MASTER_PASSWORD_CHARS};
 
 /// A key file picked in a dialog (an existing file, or one just created).
@@ -37,7 +39,7 @@ impl KeyFileChoice {
             None => Ok(None),
             Some(p) => KeyFile::from_path(p)
                 .map(Some)
-                .map_err(|e| format!("Couldn't read the key file: {e}")),
+                .map_err(|e| trf!("Couldn't read the key file: {e}", e)),
         }
     }
 
@@ -52,20 +54,20 @@ pub fn key_file_picker(ui: &mut egui::Ui, choice: &mut KeyFileChoice, allow_crea
         .path
         .as_ref()
         .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "No key file".into());
+        .unwrap_or_else(|| tr("No key file").into());
     let (mut pick, mut create, mut clear) = (false, false, false);
     widgets::truncated_path_row(ui, &shown, |ui| {
         if choice.path.is_some() {
-            clear = widgets::icon_button(ui, icons::X, "Don't use a key file").clicked();
+            clear = widgets::icon_button(ui, icons::X, tr("Don't use a key file")).clicked();
         }
         if allow_create {
-            create = widgets::secondary_button(ui, "Create new…").clicked();
+            create = widgets::secondary_button(ui, tr("Create new…")).clicked();
         }
-        pick = widgets::secondary_button(ui, "Choose…").clicked();
+        pick = widgets::secondary_button(ui, tr("Choose…")).clicked();
     });
     if pick {
         if let Some(p) = rfd::FileDialog::new()
-            .set_title("Choose key file")
+            .set_title(tr("Choose key file"))
             .pick_file()
         {
             *choice = KeyFileChoice {
@@ -76,7 +78,7 @@ pub fn key_file_picker(ui: &mut egui::Ui, choice: &mut KeyFileChoice, allow_crea
     }
     if create {
         let mut dlg = rfd::FileDialog::new()
-            .set_title("Save new key file")
+            .set_title(tr("Save new key file"))
             .set_file_name("vault.keyfile");
         if let Some(d) = documents_dir() {
             dlg = dlg.set_directory(d);
@@ -93,13 +95,13 @@ pub fn key_file_picker(ui: &mut egui::Ui, choice: &mut KeyFileChoice, allow_crea
                 },
                 Err(VaultError::AlreadyExists) => KeyFileChoice {
                     error: Some(
-                        "A file with that name already exists; key files are never overwritten."
+                        tr("A file with that name already exists; key files are never overwritten.")
                             .into(),
                     ),
                     ..Default::default()
                 },
                 Err(e) => KeyFileChoice {
-                    error: Some(format!("Couldn't save the key file: {e}")),
+                    error: Some(trf!("Couldn't save the key file: {e}", e)),
                     ..Default::default()
                 },
             };
@@ -112,7 +114,7 @@ pub fn key_file_picker(ui: &mut egui::Ui, choice: &mut KeyFileChoice, allow_crea
         widgets::error_text(ui, e);
     } else if choice.created {
         ui.label(
-            RichText::new("New key file saved. Keep a copy somewhere safe — without it the vault cannot be opened.")
+            RichText::new(tr("New key file saved. Keep a copy somewhere safe — without it the vault cannot be opened."))
                 .size(12.0)
                 .color(warn()),
         );
@@ -139,9 +141,9 @@ impl KdfPreset {
 
     pub fn label(self) -> &'static str {
         match self {
-            KdfPreset::Standard => "Standard (64 MiB, recommended)",
-            KdfPreset::Strong => "Strong (256 MiB, slower unlock)",
-            KdfPreset::Paranoid => "Maximum (1 GiB, needs free RAM)",
+            KdfPreset::Standard => tr("Standard (64 MiB, recommended)"),
+            KdfPreset::Strong => tr("Strong (256 MiB, slower unlock)"),
+            KdfPreset::Paranoid => tr("Maximum (1 GiB, needs free RAM)"),
         }
     }
 }
@@ -169,7 +171,7 @@ pub struct CreateState {
 impl Default for CreateState {
     fn default() -> Self {
         CreateState {
-            name: "Personal".into(),
+            name: tr("Personal").into(),
             path: None,
             password: secret_buffer(),
             confirm: secret_buffer(),
@@ -203,7 +205,7 @@ fn safe_file_stem(name: &str) -> String {
         })
         .collect();
     if s.trim().is_empty() {
-        "Vault".into()
+        tr("Vault").into()
     } else {
         s
     }
@@ -235,19 +237,21 @@ impl CreateState {
 
     fn validate(&self) -> Result<(), &'static str> {
         if self.name.trim().is_empty() {
-            return Err("Enter a name for the vault.");
+            return Err(tr("Enter a name for the vault."));
         }
         if self.path.is_none() {
-            return Err("Choose where to save the vault file.");
+            return Err(tr("Choose where to save the vault file."));
         }
         if self.password.chars().count() < MIN_MASTER_PASSWORD_CHARS {
-            return Err("The master password must be at least 10 characters.");
+            return Err(tr("The master password must be at least 10 characters."));
         }
         if *self.password != *self.confirm {
-            return Err("The passwords don't match.");
+            return Err(tr("The passwords don't match."));
         }
         if !self.acknowledged {
-            return Err("Confirm that you understand there is no password recovery.");
+            return Err(tr(
+                "Confirm that you understand there is no password recovery.",
+            ));
         }
         Ok(())
     }
@@ -271,7 +275,7 @@ pub fn show(ctx: &egui::Context, s: &mut CreateState, _svc: &mut Services) -> Op
             }
             Poll::Failed => {
                 s.job = None;
-                s.error = Some("Vault creation failed unexpectedly.".into());
+                s.error = Some(tr("Vault creation failed unexpectedly.").into());
             }
         }
     }
@@ -284,34 +288,34 @@ pub fn show(ctx: &egui::Context, s: &mut CreateState, _svc: &mut Services) -> Op
                 ui.add_space(((ui.available_height() - 640.0) / 2.0).max(16.0));
                 centered_column(ui, 480.0, |ui| {
                     ui.add_enabled_ui(!busy, |ui| {
-                        if widgets::link_button(ui, &icons::with(icons::ARROW_LEFT, "Back")).clicked() {
+                        if widgets::link_button(ui, &icons::with(icons::ARROW_LEFT, tr("Back"))).clicked() {
                             t = Some(Transition::Welcome);
                         }
                     });
                     ui.add_space(6.0);
-                    ui.label(strong("New vault", 22.0));
+                    ui.label(strong(tr("New vault"), 22.0));
                     ui.add_space(12.0);
 
                     card(ui, |ui| {
                         ui.add_enabled_ui(!busy, |ui| {
-                            ui.label(small("Name"));
-                            widgets::text_input(ui, &mut s.name, "Personal");
+                            ui.label(small(tr("Name")));
+                            widgets::text_input(ui, &mut s.name, tr("Personal"));
                             ui.add_space(6.0);
 
-                            ui.label(small("File"));
+                            ui.label(small(tr("File")));
                             let shown = s
                                 .path
                                 .as_ref()
                                 .map(|p| p.display().to_string())
-                                .unwrap_or_else(|| "Not chosen yet".into());
+                                .unwrap_or_else(|| tr("Not chosen yet").into());
                             let mut choose = false;
                             widgets::truncated_path_row(ui, &shown, |ui| {
-                                choose = widgets::secondary_button(ui, "Choose…").clicked();
+                                choose = widgets::secondary_button(ui, tr("Choose…")).clicked();
                             });
                             if choose {
                                 let mut dlg = rfd::FileDialog::new()
-                                    .set_title("Save new vault as")
-                                    .add_filter("VaultRust vault", &["vault"])
+                                    .set_title(tr("Save new vault as"))
+                                    .add_filter(tr("VaultRust vault"), &["vault"])
                                     .set_file_name(format!("{}.vault", safe_file_stem(&s.name)));
                                 if let Some(d) = documents_dir() {
                                     dlg = dlg.set_directory(d);
@@ -322,25 +326,25 @@ pub fn show(ctx: &egui::Context, s: &mut CreateState, _svc: &mut Services) -> Op
                             }
                             ui.add_space(6.0);
 
-                            ui.label(small("Master password"));
-                            widgets::password_input(ui, &mut s.password, &mut s.reveal, "At least 10 characters");
+                            ui.label(small(tr("Master password")));
+                            widgets::password_input(ui, &mut s.password, &mut s.reveal, tr("At least 10 characters"));
                             if !s.password.is_empty() {
                                 widgets::strength_meter(ui, &estimate_strength(&s.password));
                             }
                             ui.add_space(4.0);
-                            ui.label(small("Confirm master password"));
+                            ui.label(small(tr("Confirm master password")));
                             let mut reveal2 = s.reveal;
                             widgets::password_input(ui, &mut s.confirm, &mut reveal2, "");
                             s.reveal = reveal2;
                             if !s.confirm.is_empty() && *s.confirm != *s.password {
-                                ui.label(RichText::new("Doesn't match").color(danger()).size(12.5));
+                                ui.label(RichText::new(tr("Doesn't match")).color(danger()).size(12.5));
                             }
                             ui.add_space(6.0);
 
-                            egui::CollapsingHeader::new(small("Advanced"))
+                            egui::CollapsingHeader::new(small(tr("Advanced")))
                                 .id_salt("create_advanced")
                                 .show(ui, |ui| {
-                                    ui.label(small("Key derivation (Argon2id)"));
+                                    ui.label(small(tr("Key derivation (Argon2id)")));
                                     egui::ComboBox::from_id_salt("kdf_preset")
                                         .width(ui.available_width())
                                         .icon(widgets::combo_caret)
@@ -351,10 +355,10 @@ pub fn show(ctx: &egui::Context, s: &mut CreateState, _svc: &mut Services) -> Op
                                             }
                                         });
                                     ui.add_space(8.0);
-                                    ui.label(small("Key file (optional second factor)"));
+                                    ui.label(small(tr("Key file (optional second factor)")));
                                     key_file_picker(ui, &mut s.key_file, true);
                                     ui.label(faint(
-                                        "With a key file, the vault opens only with both the password and the file.",
+                                        tr("With a key file, the vault opens only with both the password and the file."),
                                     ));
                                 });
                             ui.add_space(8.0);
@@ -362,12 +366,12 @@ pub fn show(ctx: &egui::Context, s: &mut CreateState, _svc: &mut Services) -> Op
                             widgets::warning_box(
                                 ui,
                                 if s.key_file.is_chosen() {
-                                    "A forgotten master password or a lost key file cannot be recovered — not even by you."
+                                    tr("A forgotten master password or a lost key file cannot be recovered — not even by you.")
                                 } else {
-                                    "A forgotten master password cannot be recovered or reset — not even by you."
+                                    tr("A forgotten master password cannot be recovered or reset — not even by you.")
                                 },
                             );
-                            ui.checkbox(&mut s.acknowledged, "I understand");
+                            ui.checkbox(&mut s.acknowledged, tr("I understand"));
                         });
                         ui.add_space(8.0);
 
@@ -377,9 +381,9 @@ pub fn show(ctx: &egui::Context, s: &mut CreateState, _svc: &mut Services) -> Op
                         if busy {
                             ui.horizontal(|ui| {
                                 ui.add(egui::Spinner::new());
-                                ui.label(dim("Creating vault…"));
+                                ui.label(dim(tr("Creating vault…")));
                             });
-                        } else if widgets::primary_button_wide(ui, "Create vault", true).clicked() {
+                        } else if widgets::primary_button_wide(ui, tr("Create vault"), true).clicked() {
                             match s.validate() {
                                 Err(e) => s.error = Some(e.into()),
                                 Ok(()) => {
@@ -405,17 +409,17 @@ pub fn show(ctx: &egui::Context, s: &mut CreateState, _svc: &mut Services) -> Op
         let mut decision = None;
         let resp = egui::Modal::new(egui::Id::new("create_overwrite")).show(ctx, |ui| {
             ui.set_width(420.0);
-            ui.label(strong("Replace existing file?", 16.0));
+            ui.label(strong(tr("Replace existing file?"), 16.0));
             ui.add_space(4.0);
             ui.add(egui::Label::new(dim(shown)).wrap());
             ui.add_space(6.0);
-            widgets::danger_box(ui, "Its current contents will be permanently lost.");
+            widgets::danger_box(ui, tr("Its current contents will be permanently lost."));
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if widgets::danger_button(ui, "Replace").clicked() {
+                if widgets::danger_button(ui, tr("Replace")).clicked() {
                     decision = Some(true);
                 }
-                if widgets::secondary_button(ui, "Cancel").clicked() {
+                if widgets::secondary_button(ui, tr("Cancel")).clicked() {
                     decision = Some(false);
                 }
             });

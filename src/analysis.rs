@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 use crate::generator::wordlist;
-use crate::model::{EntryKind, VaultData, EXPIRY_WARNING_DAYS};
+use crate::model::{Entry, EntryKind, FieldKind, VaultData, EXPIRY_WARNING_DAYS};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Strength {
@@ -22,13 +22,13 @@ pub enum Strength {
 
 impl Strength {
     pub fn label(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             Strength::VeryWeak => "Very weak",
             Strength::Weak => "Weak",
             Strength::Fair => "Fair",
             Strength::Strong => "Strong",
             Strength::VeryStrong => "Very strong",
-        }
+        })
     }
 
     pub fn is_weak(self) -> bool {
@@ -408,6 +408,9 @@ pub struct HealthReport {
     pub expired: Vec<(u64, i64)>,
     /// Entries expiring within [`EXPIRY_WARNING_DAYS`], soonest first.
     pub expiring: Vec<(u64, i64)>,
+    /// Groups of two or more items that look like the same account (see
+    /// [`duplicate_key`]), oldest item first in each group.
+    pub duplicates: Vec<Vec<u64>>,
     /// 0-100, from password strength and reuse only.
     pub score: u32,
 }
@@ -441,6 +444,52 @@ impl HealthReport {
 }
 
 const OLD_PASSWORD_SECS: i64 = 365 * 86_400;
+
+/// What makes two items "the same account": the website's host and the
+/// username (or email), or, for items without a website, the type, title
+/// and username. Items with neither a website nor a username are never
+/// considered duplicates (two secure notes may share a title on purpose).
+pub fn duplicate_key(e: &Entry) -> Option<String> {
+    let user = e
+        .first_of(FieldKind::Username)
+        .or_else(|| e.first_of(FieldKind::Email))
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    let host = e
+        .first_of(FieldKind::Url)
+        .map(crate::autotype::url_host)
+        .unwrap_or_default();
+    if !host.is_empty() {
+        return Some(format!("site\u{0}{host}\u{0}{user}"));
+    }
+    let title = e.title.trim().to_lowercase();
+    if user.is_empty() || title.is_empty() {
+        return None;
+    }
+    Some(format!("item\u{0}{:?}\u{0}{title}\u{0}{user}", e.kind))
+}
+
+fn find_duplicates(data: &VaultData) -> Vec<Vec<u64>> {
+    let mut groups: HashMap<String, Vec<&Entry>> = HashMap::new();
+    for e in &data.entries {
+        if let Some(k) = duplicate_key(e) {
+            groups.entry(k).or_default().push(e);
+        }
+    }
+    let mut out: Vec<Vec<&Entry>> = groups.into_values().filter(|g| g.len() > 1).collect();
+    for g in &mut out {
+        g.sort_by_key(|e| (e.created, e.id));
+    }
+    out.sort_by(|a, b| {
+        b.len()
+            .cmp(&a.len())
+            .then_with(|| a[0].title.to_lowercase().cmp(&b[0].title.to_lowercase()))
+    });
+    out.into_iter()
+        .map(|g| g.into_iter().map(|e| e.id).collect())
+        .collect()
+}
 
 pub fn analyze(data: &VaultData, now: i64) -> HealthReport {
     let mut report = HealthReport::default();
@@ -490,6 +539,7 @@ pub fn analyze(data: &VaultData, now: i64) -> HealthReport {
     }
     report.expired.sort_by_key(|(_, at)| *at);
     report.expiring.sort_by_key(|(_, at)| *at);
+    report.duplicates = find_duplicates(data);
 
     for entry in &data.entries {
         for (i, f) in entry.fields.iter().enumerate() {
@@ -521,6 +571,35 @@ pub fn analyze(data: &VaultData, now: i64) -> HealthReport {
 mod tests {
     use super::*;
     use crate::model::{Entry, EntryKind};
+
+    #[test]
+    fn duplicate_accounts_are_grouped() {
+        let mut v = VaultData::new("t");
+        let login = |title: &str, url: &str, user: &str, created: i64| {
+            let mut e = Entry::new(EntryKind::Login);
+            e.title = title.into();
+            e.fields[0].value = url.into();
+            e.fields[1].value = user.into();
+            e.created = created;
+            e
+        };
+        let a = login("GitHub", "https://github.com/login", "alice", 1);
+        let b = login("GitHub (old)", "https://www.github.com/", "Alice", 2);
+        let other_user = login("GitHub", "https://github.com", "bob", 3);
+        let c = login("Bank", "", "me", 4);
+        let d = login("bank", "", "ME", 5);
+        let no_user = login("Notes", "", "", 6);
+        let no_user2 = login("Notes", "", "", 7);
+        let ids = (a.id, b.id, c.id, d.id);
+        for e in [a, b, other_user, c, d, no_user, no_user2] {
+            v.entries.push(e);
+        }
+        let mut groups = analyze(&v, 0).duplicates;
+        groups.sort();
+        let mut want = vec![vec![ids.0, ids.1], vec![ids.2, ids.3]];
+        want.sort();
+        assert_eq!(groups, want);
+    }
 
     #[test]
     fn expired_and_expiring_items_are_reported() {
