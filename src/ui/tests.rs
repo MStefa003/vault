@@ -420,6 +420,51 @@ fn username_suggestions_fill_empty_fields() {
 }
 
 #[test]
+fn welcome_tour_shows_once_and_is_remembered() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ui.vault");
+    let mut h = harness(unlocked_app(&path));
+    h.state_mut().prefs.tour_seen = false;
+    // Let the dialog finish fading in before clicking.
+    for _ in 0..10 {
+        h.step();
+    }
+    h.get_by_label("Welcome to VaultRust");
+    for _ in 0..5 {
+        h.get_by_label("Next").click();
+        // The dialog re-centres over a few frames when its height changes.
+        for _ in 0..5 {
+            h.step();
+        }
+    }
+    assert_eq!(main_state(&mut h).tour.as_ref().map(|t| t.step), Some(5));
+    h.get_by_label("Stay safe");
+    h.get_by_label("Get started").click();
+    h.step();
+    h.step();
+    assert!(h.state().prefs.tour_seen, "remembered");
+    assert!(main_state(&mut h).tour.is_none());
+    // Not shown again.
+    h.step();
+    assert!(h.query_by_label("Welcome to VaultRust").is_none());
+}
+
+#[test]
+fn welcome_tour_can_be_skipped_with_escape() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ui.vault");
+    let mut h = harness(unlocked_app(&path));
+    h.state_mut().prefs.tour_seen = false;
+    h.step();
+    h.step();
+    h.key_press(eframe::egui::Key::Escape);
+    h.step();
+    h.step();
+    assert!(h.state().prefs.tour_seen);
+    assert!(main_state(&mut h).tour.is_none());
+}
+
+#[test]
 fn undo_in_the_toast_restores_a_deleted_item() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("ui.vault");
@@ -907,6 +952,13 @@ fn render_screenshots() {
     main_state(&mut h).items.new_entry(EntryKind::Login);
     main_state(&mut h).page = Page::Items(Category::Logins);
     shoot(&mut h, "27-new-login");
+    main_state(&mut h).items.editor = None;
+    main_state(&mut h).page = Page::Dashboard;
+    for step in [0, 3, 5] {
+        main_state(&mut h).tour = Some(super::tutorial::Tour { step });
+        shoot(&mut h, &format!("29-tour-{step}"));
+    }
+    main_state(&mut h).tour = None;
     main_state(&mut h).items.editor = None;
     main_state(&mut h).page = Page::Dashboard;
     let json = br#"{"tag_name":"v0.2.0","body":"- Scan 2FA QR codes","assets":[

@@ -15,6 +15,7 @@ mod tests;
 mod theme;
 mod toast;
 mod trash_page;
+mod tutorial;
 mod unlock;
 mod updates;
 mod welcome;

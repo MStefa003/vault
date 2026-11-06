@@ -95,6 +95,8 @@ pub struct MainState {
     session_checked: Option<Instant>,
     /// Turning on Windows Hello (shows the Hello prompt).
     pub hello_job: Option<Job<Result<(), crate::hello::HelloError>>>,
+    /// The welcome tour, while it is showing.
+    pub tour: Option<super::tutorial::Tour>,
     /// Looking for a two-step verification QR code on screen.
     pub qr_job: Option<Job<Result<Zeroizing<String>, crate::qr::ScanError>>>,
     /// A screen asked for a QR scan this frame (started where a context is
@@ -141,6 +143,7 @@ impl MainState {
             auto_type_job: None,
             hello_job: None,
             qr_job: None,
+            tour: None,
             qr_requested: false,
             hello_enabled: None,
             #[cfg(test)]
@@ -778,6 +781,19 @@ impl MainState {
 
         if let Some(t) = modals::show(ctx, self, svc) {
             transition = Some(t);
+        }
+        // The welcome tour, once, the first time a vault is open.
+        if self.tour.is_none() && !svc.prefs.tour_seen && self.modal.is_none() {
+            self.tour = Some(super::tutorial::Tour::default());
+        }
+        if let Some(tour) = &mut self.tour {
+            if super::tutorial::show(ctx, tour) {
+                self.tour = None;
+                if !svc.prefs.tour_seen {
+                    svc.prefs.tour_seen = true;
+                    svc.prefs.save();
+                }
+            }
         }
         transition
     }

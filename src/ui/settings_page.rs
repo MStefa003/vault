@@ -104,7 +104,7 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) -> Option
             ui.add_space(12.0);
             import_export_section(ui, ms, svc);
             ui.add_space(12.0);
-            app_section(ui, svc);
+            app_section(ui, ms, svc);
         });
     None
 }
@@ -762,7 +762,7 @@ fn import_export_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Servic
     });
 }
 
-fn app_section(ui: &mut egui::Ui, svc: &mut Services) {
+fn app_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
     section(ui, "App", |ui| {
         let count = svc.recent.paths.len();
         let mut clear = false;
@@ -813,6 +813,18 @@ fn app_section(ui: &mut egui::Ui, svc: &mut Services) {
                 svc.prefs.close_to_tray = keep;
                 svc.prefs.save();
             }
+        }
+        widgets::divider(ui, 16.0);
+        let mut tour = false;
+        widgets::setting_row(
+            ui,
+            "Welcome tour",
+            "A quick look at saving, copying, auto-type and two-step codes",
+            160.0,
+            |ui| tour = widgets::secondary_button(ui, "Show the tour again").clicked(),
+        );
+        if tour {
+            ms.tour = Some(super::tutorial::Tour::default());
         }
         widgets::divider(ui, 16.0);
         startup_row(ui, svc);

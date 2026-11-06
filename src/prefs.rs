@@ -56,6 +56,8 @@ pub struct AppPrefs {
     pub check_updates: bool,
     /// When that was last done (unix seconds).
     pub last_update_check: i64,
+    /// The welcome tour was finished or skipped.
+    pub tour_seen: bool,
     persist: bool,
 }
 
@@ -66,6 +68,7 @@ impl Default for AppPrefs {
             close_to_tray: false,
             check_updates: true,
             last_update_check: 0,
+            tour_seen: false,
             persist: false,
         }
     }
@@ -91,7 +94,10 @@ impl AppPrefs {
 
     /// Preferences that are never written to disk (used by tests).
     pub fn in_memory() -> Self {
-        AppPrefs::default()
+        AppPrefs {
+            tour_seen: true,
+            ..AppPrefs::default()
+        }
     }
 
     fn parse(text: &str) -> Self {
@@ -111,6 +117,7 @@ impl AppPrefs {
                 ("keep_in_tray", v) => prefs.close_to_tray = v == "true",
                 ("check_updates", v) => prefs.check_updates = v != "false",
                 ("last_update_check", v) => prefs.last_update_check = v.parse().unwrap_or(0),
+                ("tour_seen", v) => prefs.tour_seen = v == "true",
                 _ => {}
             }
         }
@@ -119,11 +126,12 @@ impl AppPrefs {
 
     fn serialize(&self) -> String {
         format!(
-            "theme={}\nkeep_in_tray={}\ncheck_updates={}\nlast_update_check={}\n",
+            "theme={}\nkeep_in_tray={}\ncheck_updates={}\nlast_update_check={}\ntour_seen={}\n",
             self.theme.key(),
             self.close_to_tray,
             self.check_updates,
-            self.last_update_check
+            self.last_update_check,
+            self.tour_seen
         )
     }
 
@@ -150,6 +158,7 @@ mod tests {
             close_to_tray: false,
             check_updates: false,
             last_update_check: 1_700_000_000,
+            tour_seen: true,
             persist: false,
         };
         assert_eq!(AppPrefs::parse(&p.serialize()), p);

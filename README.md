@@ -36,6 +36,8 @@ code-signed yet: choose **More info → Run anyway**.
   to copy
 * **Less typing**: items without a title are named after their website, and
   the usernames and emails you use most are one click away
+* **Welcome tour**: six short cards the first time you open a vault (replay it
+  from Settings)
 * **Automatic updates**: when a new version is published on
   [GitHub](https://github.com/MStefa003/vault/releases), VaultRust offers to
   install it. Releases are signed, and an update is only installed if its
