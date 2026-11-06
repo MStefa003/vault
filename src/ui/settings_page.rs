@@ -106,6 +106,8 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) -> Option
             ui.add_space(12.0);
             import_export_section(ui, ms, svc);
             ui.add_space(12.0);
+            super::browser_link::settings_section(ui, svc);
+            ui.add_space(12.0);
             app_section(ui, ms, svc);
         });
     None

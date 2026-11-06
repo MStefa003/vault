@@ -65,6 +65,12 @@ code-signed yet: choose **More info → Run anyway**.
   VaultRust types username, Tab, password, Enter. Shift+Enter types only the
   password, Ctrl+Enter the one-time code. Items can have their own sequence,
   e.g. `{USERNAME}{ENTER}{DELAY 1500}{PASSWORD}{ENTER}` for two-page logins
+* **Browser extension** for Chrome, Edge and Brave: click the VaultRust
+  button in the toolbar (or press Alt+Shift+L) to fill in the login for the
+  site you're on. Turn it on in Settings → Browser extension, which also
+  shows how to add the extension. Each browser is approved once in the app,
+  and it only ever gets the logins for the site in the tab, while the vault
+  is unlocked. See [Browser extension](#browser-extension) below
 * **Windows Hello**: unlock with fingerprint, face or PIN (the master
   password is still needed once after VaultRust starts)
 * **Expiry reminders**: give items an expiry date (API keys, work passwords);
@@ -180,6 +186,34 @@ $env:VAULTRUST_SCREENSHOT_DIR = "$env:TEMP\vaultrust-shots"
 cargo test --lib render_screenshots -- --ignored
 ```
 
+## Browser extension
+
+The extension isn't in the browsers' stores yet; it comes with VaultRust:
+
+1. In VaultRust, open **Settings → Browser extension** and turn on **Fill in
+   logins in your browser**. This writes the extension to
+   `%LOCALAPPDATA%\VaultRust\Browser extension` and registers VaultRust with
+   Chrome, Edge and Brave so the extension can reach it.
+2. In the browser, open `chrome://extensions` (`edge://extensions`,
+   `brave://extensions`), turn on **Developer mode**, choose **Load
+   unpacked** and pick that folder.
+3. Click the VaultRust button in the toolbar, then **Connect to VaultRust**.
+   VaultRust asks whether to allow the browser and shows a six-digit code;
+   allow it if the extension shows the same code.
+
+From then on the button lists the logins for the site in the current tab
+(most recently used first); click one to fill in the username and password.
+Alt+Shift+L fills in the most recently used one directly. On a page that asks
+only for a two-step code, the current one-time code is filled in instead.
+
+How it works: the browser starts `VaultRust.exe` as its helper, which passes
+each request over a named pipe (open only to your Windows account) to the
+running app. The app answers only browsers you approved, only while a vault
+is unlocked, and only with logins whose website matches the tab's site
+(subdomains included; never an `https` login on an `http` page). See
+[docs/SECURITY.md](docs/SECURITY.md#browser-extension). Firefox isn't
+supported yet.
+
 ## Project layout
 
 ```text
@@ -196,6 +230,8 @@ src/
   breach.rs         offline lookup in a sorted Have I Been Pwned SHA-1 list
   totp.rs           RFC 6238 one-time codes, otpauth:// parsing
   autotype.rs       window matching and keystroke sequences for auto-type
+  browser.rs        browser extension: messages, site matching, pairing,
+                    the helper the browser starts, browser registration
   hello.rs          Windows Hello quick unlock (TPM-backed key credential)
   i18n.rs, i18n/    interface language: English text as keys, Greek table
   prefs.rs          app-level theme / close-button preferences
@@ -206,10 +242,12 @@ src/
   clipboard.rs      copy with clearing and Windows history exclusion
   os_protect.rs     all unsafe code: capture exclusion, session-lock
                     detection, crash-report hardening, global hotkeys,
-                    auto-type keystrokes
+                    auto-type keystrokes, the browser extension's pipe
   recent.rs         recently opened vault paths
   ui/               egui screens (welcome, create, unlock, dashboard, items,
                     trash, generator, security center, settings, modals)
+browser-extension/  the Chrome / Edge / Brave extension (built into the
+                    program and written out from Settings)
 tests/              end-to-end vault tests, KeePass fixtures, robustness
 fuzz/               cargo-fuzz targets for every parser of untrusted input
 docs/SECURITY.md    cryptographic design and limitations

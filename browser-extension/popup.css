@@ -1,0 +1,133 @@
+/* The colours of the VaultRust app (light and dark). */
+:root {
+  --bg: #f6f4f0;
+  --surface: #ffffff;
+  --hover: #efece7;
+  --border: #ddd8d0;
+  --text: #1f1d1a;
+  --dim: #5b564f;
+  --faint: #8a847b;
+  --accent: #1e7a54;
+  --accent-fill: #237f58;
+  --danger: #c03f37;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #171615;
+    --surface: #1e1d1b;
+    --hover: #28261f;
+    --border: #2e2c29;
+    --text: #ece8e2;
+    --dim: #a59f96;
+    --faint: #746f68;
+    --accent: #6fc29b;
+    --accent-fill: #2f8560;
+    --danger: #e8665f;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  width: 340px;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.name { font-weight: 600; }
+
+.site {
+  margin-left: auto;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 170px;
+}
+
+main { padding: 12px 14px 14px; }
+
+.message { color: var(--dim); margin: 2px 0 12px; }
+.message strong { color: var(--text); display: block; margin-bottom: 2px; }
+.error { color: var(--danger); }
+
+.code {
+  font: 600 26px/1.2 "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 2px;
+  text-align: center;
+  padding: 10px;
+  margin: 4px 0 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.primary {
+  width: 100%;
+  padding: 7px 12px;
+  border: 0;
+  background: var(--accent-fill);
+  color: #fff;
+  font-weight: 600;
+}
+
+.primary:hover { filter: brightness(1.08); }
+
+.link {
+  border: 0;
+  background: none;
+  color: var(--accent);
+  padding: 4px 0;
+}
+
+.logins { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+
+.login {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 9px;
+  text-align: left;
+  background: var(--surface);
+  color: inherit;
+  border: 1px solid var(--border);
+}
+
+.login:hover, .login:focus-visible { background: var(--hover); outline: none; border-color: var(--accent); }
+
+.tile {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  color: #fff;
+  background: var(--accent-fill);
+}
+
+.who { min-width: 0; }
+.who .title, .who .user { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.who .title { font-weight: 600; }
+.who .user { color: var(--dim); font-size: 12px; }
+
+.hint { color: var(--faint); font-size: 12px; margin-top: 6px; }

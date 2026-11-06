@@ -55,9 +55,21 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
           Get-FileHash release\* -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content release\SHA256SUMS.txt
 
+      # The version's section of CHANGELOG.md, which the app also shows
+      # under "What's new".
+      - name: Release notes
+        shell: pwsh
+        run: |
+          $v = [regex]::Escape("${{ steps.version.outputs.version }}")
+          $text = Get-Content CHANGELOG.md -Raw -Encoding utf8
+          $m = [regex]::Match($text, "(?ms)^## $v\b[^\n]*\n(.*?)(?=^## |\z)")
+          if (-not $m.Success -or -not $m.Groups[1].Value.Trim()) { throw "CHANGELOG.md has no notes for ${{ steps.version.outputs.version }}" }
+          Set-Content release\NOTES.md $m.Groups[1].Value.Trim() -Encoding utf8
+
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
+          body_path: release/NOTES.md
           # The installer is what people download; VaultRust.exe and its
           # signature are what installed copies update themselves from.
           files: |
@@ -65,4 +77,3 @@ jobs:
             release/VaultRust.exe
             release/VaultRust.exe.sig
             release/SHA256SUMS.txt
-          generate_release_notes: true

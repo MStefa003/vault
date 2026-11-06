@@ -315,6 +315,7 @@ fn with_toasts<R>(
         hotkeys: Default::default(),
         tray: false,
         updates: &mut Default::default(),
+        browser: &mut Default::default(),
     };
     f(main_state(h), &mut svc)
 }
@@ -1006,6 +1007,30 @@ fn render_screenshots() {
         "Tagged with OTP - Sign in - Google Chrome",
     ));
     shoot(&mut h, "18-auto-type");
+    main_state(&mut h).modal = None;
+
+    // The browser extension: its settings (a tall window shows the whole
+    // page) and the question when a browser asks to connect.
+    let mut tall = Harness::builder().with_size([1200.0, 3200.0]).build_state(
+        |ctx, app: &mut VaultRustApp| app.frame(ctx),
+        unlocked_app(&dir.path().join("Browser.vault")),
+    );
+    tall.state_mut().prefs.browser_enabled = true;
+    tall.state_mut()
+        .prefs
+        .add_browser_pairing(crate::prefs::BrowserPairing {
+            hash: "ab".repeat(32),
+            browser: "Microsoft Edge".into(),
+            added: 1_762_400_000,
+        });
+    main_state(&mut tall).page = Page::Settings;
+    shoot(&mut tall, "30-browser-settings");
+    let prefs = tall.state().prefs.clone();
+    let mut h2 = harness(unlocked_app(&dir.path().join("Pair.vault")));
+    h2.state_mut()
+        .browser
+        .ask_to_pair("Google Chrome".into(), "cd".repeat(32), &prefs);
+    shoot(&mut h2, "31-browser-pair");
 
     // The same screens in the light theme.
     h.state_mut().prefs.theme = crate::prefs::ThemePref::Light;
@@ -1182,4 +1207,97 @@ fn every_page_renders_in_greek() {
     h.step();
     h.get_by_label(&super::icons::with(super::icons::LOCK, "Κλείδωμα κρύπτης"));
     set_language(Language::English);
+}
+
+#[test]
+fn browser_extension_works_only_after_approval_and_only_for_the_site() {
+    use crate::browser::Request;
+    use std::sync::atomic::AtomicIsize;
+    use std::sync::Arc;
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = unlocked_app(&dir.path().join("ui.vault"));
+    let Screen::Main(m) = &mut app.screen else {
+        unreachable!()
+    };
+    let mut site = Entry::new(EntryKind::Login);
+    site.title = "Example".into();
+    site.fields[0].value = "https://example.com".into();
+    site.fields[1].value = "ann".into();
+    site.fields[3].value = "s3cret-pw".into();
+    let id = site.id;
+    m.vault.data_mut().upsert(site);
+    app.prefs.browser_enabled = true;
+    let mut h = harness(app);
+    h.step();
+    let link = super::browser_link::BrowserLink::new(
+        &h.ctx,
+        Arc::new(AtomicIsize::new(0)),
+        h.state().unlocked.clone(),
+    );
+    h.state_mut().browser = link;
+    let prefs = h.state().prefs.clone();
+    h.state_mut().browser.apply(&prefs).unwrap();
+    let link = h.state().browser.link();
+
+    let req = |kind: &str| Request {
+        kind: kind.into(),
+        token: "ab".repeat(32),
+        url: "https://login.example.com/signin".into(),
+        id: id.to_string(),
+        browser: "Microsoft Edge".into(),
+    };
+    // Answered on the window thread: run frames until the reply is in.
+    let ask = |h: &mut Harness<'_, VaultRustApp>, r: Request| {
+        let link = link.clone();
+        let t = std::thread::spawn(move || link.answer(&r));
+        while !t.is_finished() {
+            h.step();
+        }
+        let reply = t.join().unwrap();
+        serde_json::from_slice::<serde_json::Value>(&reply).unwrap()
+    };
+
+    assert_eq!(ask(&mut h, req("logins"))["error"], "unpaired");
+    assert_eq!(ask(&mut h, req("pair"))["error"], "unpaired");
+    h.step();
+    h.step();
+    h.get_by_label("Don't allow").click();
+    h.step();
+    h.step();
+    assert_eq!(ask(&mut h, req("logins"))["error"], "unpaired");
+
+    ask(&mut h, req("pair"));
+    h.step();
+    h.step();
+    h.get_by_label("Allow").click();
+    h.step();
+    h.step();
+    assert_eq!(h.state().prefs.browser_pairings.len(), 1);
+    assert_eq!(
+        h.state().prefs.browser_pairings[0].browser,
+        "Microsoft Edge"
+    );
+
+    let list = ask(&mut h, req("logins"));
+    let logins = list["logins"].as_array().unwrap();
+    assert_eq!(logins.len(), 1, "only the example.com login: {list}");
+    assert_eq!(logins[0]["username"], "ann");
+    assert!(!list.to_string().contains("s3cret"));
+
+    let fill = ask(&mut h, req("fill"));
+    assert_eq!(fill["password"], "s3cret-pw");
+    assert_eq!(fill["host"], "login.example.com");
+    assert!(main_state(&mut h).vault.data().entry(id).unwrap().last_used > 0);
+
+    // Another site can't get it, and nothing is answered once locked.
+    let other = Request {
+        url: "https://example.org".into(),
+        ..req("fill")
+    };
+    assert_eq!(ask(&mut h, other)["error"], "not_found");
+    h.get_by_label_contains("Lock vault").click();
+    h.step();
+    h.step();
+    assert!(is_locked(&h));
+    assert_eq!(ask(&mut h, req("fill"))["error"], "locked");
 }

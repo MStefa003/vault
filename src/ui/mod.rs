@@ -1,5 +1,6 @@
 //! egui / eframe desktop front end.
 
+mod browser_link;
 mod create;
 mod dashboard;
 mod entries;
@@ -104,6 +105,12 @@ pub fn run() -> eframe::Result<()> {
                 ctx.request_repaint();
             });
             app.hotkeys = Some(rx);
+
+            app.browser =
+                browser_link::BrowserLink::new(&cc.egui_ctx, window.clone(), app.unlocked.clone());
+            if let Err(e) = app.browser.apply(&app.prefs) {
+                app.toasts.error(e);
+            }
 
             match tray::create(&cc.egui_ctx, window, app.unlocked.clone()) {
                 Some((icon, rx)) => {
@@ -353,6 +360,8 @@ pub struct Services<'a> {
     /// The notification-area icon exists.
     pub tray: bool,
     pub updates: &'a mut updates::Updates,
+    /// The browser extension's connection.
+    pub browser: &'a mut browser_link::BrowserLink,
 }
 
 /// Requests from a screen to switch to another screen.
@@ -408,6 +417,7 @@ pub struct VaultRustApp {
     /// Vaults opened with their master password (or created) since the app
     /// started. Windows Hello is only offered for these.
     password_unlocked: HashSet<PathBuf>,
+    browser: browser_link::BrowserLink,
 }
 
 /// How long an auto-type request survives a pending unlock.
@@ -449,6 +459,7 @@ impl VaultRustApp {
             unlocked: Arc::new(AtomicBool::new(false)),
             quitting: false,
             password_unlocked: HashSet::new(),
+            browser: Default::default(),
         }
     }
 
@@ -486,6 +497,52 @@ impl VaultRustApp {
                 (_, Screen::Unlock(u)) => u.focus(),
                 _ => {}
             }
+        }
+    }
+
+    /// Requests from the browser extension: logins for a page are answered
+    /// from the unlocked vault; connecting a browser asks the user first.
+    fn handle_browser(&mut self, ctx: &egui::Context) {
+        use crate::browser::{self, Job};
+        for job in self.browser.take_jobs() {
+            match job {
+                Job::Pair { browser, hash } => {
+                    Self::bring_forward(ctx);
+                    self.browser.ask_to_pair(browser, hash, &self.prefs);
+                }
+                Job::Show => {
+                    Self::bring_forward(ctx);
+                    if let Screen::Unlock(u) = &mut self.screen {
+                        u.focus();
+                    }
+                }
+                Job::Logins { url, reply } => {
+                    let answer = match &self.screen {
+                        Screen::Main(m) => browser::logins_reply(&m.vault.data().entries, &url),
+                        _ => browser::error("locked"),
+                    };
+                    let _ = reply.send(answer);
+                }
+                Job::Fill { url, id, reply } => {
+                    let answer = match &mut self.screen {
+                        Screen::Main(m) => {
+                            let now = crate::timeutil::now_unix();
+                            let (answer, used) =
+                                browser::fill_reply(&m.vault.data().entries, &url, &id, now);
+                            if let Some(id) = used {
+                                m.vault.data_mut().mark_used(id, now);
+                                m.schedule_settings_save();
+                            }
+                            answer
+                        }
+                        _ => browser::error("locked"),
+                    };
+                    let _ = reply.send(answer);
+                }
+            }
+        }
+        if let Some(msg) = self.browser.pair_dialog(ctx, &mut self.prefs) {
+            self.toasts.info(msg);
         }
     }
 
@@ -579,6 +636,7 @@ impl VaultRustApp {
         self.clipboard.tick(Instant::now());
         self.handle_hotkey(ctx);
         self.handle_tray(ctx);
+        self.handle_browser(ctx);
         self.handle_close(ctx);
         if let Some(t) = &mut self.tray {
             match &self.screen {
@@ -610,6 +668,7 @@ impl VaultRustApp {
             hotkeys: self.hotkey_status,
             tray: self.tray.is_some(),
             updates: &mut self.updates,
+            browser: &mut self.browser,
         };
         let transition = match &mut self.screen {
             Screen::Welcome(s) => welcome::show(ctx, s, &mut svc),

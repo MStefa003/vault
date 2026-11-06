@@ -26,19 +26,25 @@ and its public half is compiled into `src/update.rs` (`PUBLIC_KEY`).
 
 ## Publishing a release
 
+First write what's new under `## Unreleased` in `CHANGELOG.md`: a few
+short, plain bullet points for the people using VaultRust. That section
+becomes the release notes on GitHub and what the app shows under "What's
+new" (the first 1200 characters), and the script refuses to release without
+it. Then run
+
 ```text
 powershell -ExecutionPolicy Bypass -File scripts\release.ps1 0.2.0
 ```
 
-This sets the version in `Cargo.toml`, commits, tags `v0.2.0` and pushes. The
+This sets the version in `Cargo.toml`, dates the changelog section, commits,
+tags `v0.2.0` and pushes. The
 **Release** workflow then tests, builds and signs the program, builds the
 installer with Inno Setup (`installer/vaultrust.iss`) and publishes:
 
 * `VaultRust-Setup-0.2.0.exe` — what people download and run;
 * `VaultRust.exe` and `VaultRust.exe.sig` — what installed copies update
   themselves from;
-* `SHA256SUMS.txt`. Edit the release on GitHub to write the notes users
-see under "What's new".
+* `SHA256SUMS.txt`.
 
 ## Windows SmartScreen
 

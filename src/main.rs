@@ -13,6 +13,15 @@ fn main() {
         eprintln!("VaultRust stopped because of an internal error at {location}.");
     }));
 
+    // Started by a browser for the VaultRust extension: relay its messages
+    // to the running app, no window.
+    let args: Vec<String> = std::env::args().collect();
+    if vaultrust::browser::is_host_invocation(&args) {
+        vaultrust::os_protect::harden_process();
+        vaultrust::browser::run_host();
+        return;
+    }
+
     if let Err(e) = vaultrust::ui::run() {
         eprintln!("VaultRust could not start: {e}");
         std::process::exit(1);

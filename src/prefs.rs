@@ -62,8 +62,24 @@ pub struct AppPrefs {
     /// Interface language (`None` = the Windows display language, if
     /// VaultRust has it, otherwise English).
     pub language: Option<Language>,
+    /// The browser extension may fill in logins.
+    pub browser_enabled: bool,
+    /// Browsers the user allowed to connect.
+    pub browser_pairings: Vec<BrowserPairing>,
     persist: bool,
 }
+
+/// A browser allowed to use the extension: the SHA-256 of its token (see
+/// `browser.rs`), which browser it said it was, and when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserPairing {
+    pub hash: String,
+    pub browser: String,
+    pub added: i64,
+}
+
+/// Approved browsers kept at most (the oldest are dropped).
+pub const MAX_BROWSER_PAIRINGS: usize = 20;
 
 impl Default for AppPrefs {
     fn default() -> Self {
@@ -74,6 +90,8 @@ impl Default for AppPrefs {
             last_update_check: 0,
             tour_seen: false,
             language: None,
+            browser_enabled: false,
+            browser_pairings: Vec::new(),
             persist: false,
         }
     }
@@ -124,22 +142,59 @@ impl AppPrefs {
                 ("last_update_check", v) => prefs.last_update_check = v.parse().unwrap_or(0),
                 ("tour_seen", v) => prefs.tour_seen = v == "true",
                 ("language", v) => prefs.language = Language::from_key(v),
+                ("browser", v) => prefs.browser_enabled = v == "on",
+                ("browser_pairing", v) => {
+                    let mut parts = v.splitn(3, ' ');
+                    if let (Some(hash), Some(added), Some(browser)) =
+                        (parts.next(), parts.next(), parts.next())
+                    {
+                        if hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+                            prefs.browser_pairings.push(BrowserPairing {
+                                hash: hash.to_ascii_lowercase(),
+                                browser: browser.to_string(),
+                                added: added.parse().unwrap_or(0),
+                            });
+                        }
+                    }
+                }
                 _ => {}
             }
         }
+        prefs.browser_pairings.truncate(MAX_BROWSER_PAIRINGS);
         prefs
     }
 
     fn serialize(&self) -> String {
-        format!(
-            "theme={}\nkeep_in_tray={}\ncheck_updates={}\nlast_update_check={}\ntour_seen={}\nlanguage={}\n",
+        let mut s = format!(
+            "theme={}\nkeep_in_tray={}\ncheck_updates={}\nlast_update_check={}\ntour_seen={}\nlanguage={}\nbrowser={}\n",
             self.theme.key(),
             self.close_to_tray,
             self.check_updates,
             self.last_update_check,
             self.tour_seen,
-            self.language.map_or("system", Language::key)
-        )
+            self.language.map_or("system", Language::key),
+            if self.browser_enabled { "on" } else { "off" },
+        );
+        for p in &self.browser_pairings {
+            // One line each: the name can't break out of it.
+            let name: String = p.browser.chars().filter(|c| !c.is_control()).collect();
+            s.push_str(&format!(
+                "browser_pairing={} {} {}\n",
+                p.hash, p.added, name
+            ));
+        }
+        s
+    }
+
+    /// Allow a browser (keeping at most [`MAX_BROWSER_PAIRINGS`]).
+    pub fn add_browser_pairing(&mut self, pairing: BrowserPairing) {
+        self.browser_pairings.retain(|p| p.hash != pairing.hash);
+        self.browser_pairings.push(pairing);
+        let extra = self
+            .browser_pairings
+            .len()
+            .saturating_sub(MAX_BROWSER_PAIRINGS);
+        self.browser_pairings.drain(..extra);
     }
 
     /// The language to show.
@@ -174,9 +229,33 @@ mod tests {
             last_update_check: 1_700_000_000,
             tour_seen: true,
             language: Some(Language::Greek),
+            browser_enabled: true,
+            browser_pairings: vec![BrowserPairing {
+                hash: "ab".repeat(32),
+                browser: "Microsoft Edge".into(),
+                added: 1_700_000_001,
+            }],
             persist: false,
         };
         assert_eq!(AppPrefs::parse(&p.serialize()), p);
+        // A bad hash or a name with a line break can't inject lines.
+        let mut q = p.clone();
+        q.browser_pairings[0].browser = "Evil\nbrowser=off".into();
+        let back = AppPrefs::parse(&q.serialize());
+        assert!(back.browser_enabled);
+        assert_eq!(back.browser_pairings[0].browser, "Evilbrowser=off");
+        assert!(AppPrefs::parse("browser_pairing=xyz 1 Chrome")
+            .browser_pairings
+            .is_empty());
+        for i in 0..30 {
+            q.add_browser_pairing(BrowserPairing {
+                hash: format!("{i:064}"),
+                browser: "Chrome".into(),
+                added: i,
+            });
+        }
+        assert_eq!(q.browser_pairings.len(), MAX_BROWSER_PAIRINGS);
+        assert_eq!(q.browser_pairings.last().unwrap().added, 29);
         let d = AppPrefs::parse("garbage\ntheme=purple\n");
         assert_eq!(d, AppPrefs::default());
         assert!(ThemePref::System.is_dark(None));

@@ -60,12 +60,24 @@ Filename: "{app}\VaultRust.exe"; Description: "{cm:LaunchProgram,VaultRust}"; Fl
 ; Left behind by an interrupted self-update.
 Type: files; Name: "{app}\VaultRust.old.exe"
 Type: files; Name: "{app}\VaultRust.new.exe"
+; The browser extension's files and helper registration (Settings → Browser
+; extension); the browsers' own copies are removed in the browsers.
+Type: filesandordirs; Name: "{localappdata}\VaultRust\Browser extension"
+Type: files; Name: "{localappdata}\VaultRust\com.vaultrust.browser.json"
 
 [Code]
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
-  // "Start with Windows" (set from VaultRust's settings) would otherwise
-  // point at a deleted program.
+  // "Start with Windows" and the browser extension's helper (both set from
+  // VaultRust's settings) would otherwise point at a deleted program.
   if CurUninstallStep = usPostUninstall then
+  begin
     RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', 'VaultRust');
+    // The browser extension's helper registration (src/browser.rs,
+    // BROWSER_KEYS).
+    RegDeleteKeyIncludingSubkeys(HKEY_CURRENT_USER, 'Software\Google\Chrome\NativeMessagingHosts\com.vaultrust.browser');
+    RegDeleteKeyIncludingSubkeys(HKEY_CURRENT_USER, 'Software\Microsoft\Edge\NativeMessagingHosts\com.vaultrust.browser');
+    RegDeleteKeyIncludingSubkeys(HKEY_CURRENT_USER, 'Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\com.vaultrust.browser');
+    RegDeleteKeyIncludingSubkeys(HKEY_CURRENT_USER, 'Software\Chromium\NativeMessagingHosts\com.vaultrust.browser');
+  end;
 end;

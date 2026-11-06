@@ -26,6 +26,10 @@
 //! * WinHTTP fetches update information and signed releases from GitHub
 //!   over HTTPS (see `update.rs`); Windows' own TLS and certificate store
 //!   are used, so no networking library is bundled.
+//! * A named pipe, open only to the current user, lets the browser
+//!   extension's helper (`browser.rs`) reach the running app; the helper
+//!   checks the app runs as the same user. Its registration with the
+//!   browsers is a per-user registry key.
 //! * uxtheme's `SetPreferredAppMode` (by ordinal) lets popup menus — the
 //!   notification-area menu — follow Windows' dark mode.
 //!
@@ -1142,3 +1146,345 @@ pub fn activate_running_instance() {}
 
 #[cfg(not(windows))]
 pub fn listen_for_activation(_on_activate: impl Fn() + Send + 'static) {}
+
+/// The browser extension's link to the running app: a named pipe that only
+/// the current user can open, named after the user's SID so other users'
+/// sessions get their own.
+#[cfg(windows)]
+pub fn browser_pipe_name() -> Option<String> {
+    Some(format!(
+        r"\\.\pipe\VaultRust-browser-{}",
+        user_sid::current()?
+    ))
+}
+
+#[cfg(not(windows))]
+pub fn browser_pipe_name() -> Option<String> {
+    None
+}
+
+/// Serve the pipe `name` on a background thread: `on_client` runs (on a
+/// thread of its own) for every connection. Returns false if the pipe
+/// couldn't be created, e.g. because another program already owns the name.
+#[cfg(windows)]
+pub fn serve_pipe(name: &str, on_client: impl Fn(std::fs::File) + Send + Sync + 'static) -> bool {
+    use std::os::windows::io::FromRawHandle;
+    use std::sync::Arc;
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GetLastError, LocalFree, ERROR_PIPE_CONNECTED, INVALID_HANDLE_VALUE,
+    };
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX,
+    };
+    use windows_sys::Win32::System::Pipes::{
+        ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
+        PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    };
+
+    let Some(sid) = user_sid::current() else {
+        return false;
+    };
+    // Protected DACL with a single entry: full access for this user only.
+    let sddl = run_key::wide(&format!("D:P(A;;GA;;;{sid})"));
+    let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+    // SAFETY: NUL-terminated SDDL; on success `sd` is a LocalAlloc'd
+    // descriptor, kept for as long as pipe instances are created.
+    let converted = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.as_ptr(),
+            SDDL_REVISION_1,
+            &mut sd,
+            std::ptr::null_mut(),
+        )
+    } != 0;
+    if !converted {
+        return false;
+    }
+    let sd = sd as isize;
+    let wide = run_key::wide(name);
+    let create = move |first: bool| -> Option<isize> {
+        let attrs = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: sd as _,
+            bInheritHandle: 0,
+        };
+        let flags = PIPE_ACCESS_DUPLEX
+            | if first {
+                FILE_FLAG_FIRST_PIPE_INSTANCE
+            } else {
+                0
+            };
+        // SAFETY: NUL-terminated name and valid attributes; the handle is
+        // owned by the caller.
+        let h = unsafe {
+            CreateNamedPipeW(
+                wide.as_ptr(),
+                flags,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+                PIPE_UNLIMITED_INSTANCES,
+                64 * 1024,
+                64 * 1024,
+                0,
+                &attrs,
+            )
+        };
+        (h != INVALID_HANDLE_VALUE).then_some(h as isize)
+    };
+    // The first instance is created here, so a name taken by someone else
+    // is reported to the caller.
+    let Some(mut next) = create(true) else {
+        // SAFETY: `sd` came from LocalAlloc above and is not used again.
+        unsafe { LocalFree(sd as _) };
+        return false;
+    };
+    let on_client = Arc::new(on_client);
+    let spawned = std::thread::Builder::new()
+        .name("vaultrust-browser-pipe".into())
+        .spawn(move || loop {
+            let h = next;
+            // SAFETY: `h` is a pipe instance created above; this blocks
+            // until a client connects.
+            let ok = unsafe { ConnectNamedPipe(h as _, std::ptr::null_mut()) } != 0
+                || unsafe { GetLastError() } == ERROR_PIPE_CONNECTED;
+            if ok {
+                // SAFETY: we own `h`; the File takes over closing it.
+                let file = unsafe { std::fs::File::from_raw_handle(h as _) };
+                let f = on_client.clone();
+                let _ = std::thread::Builder::new()
+                    .name("vaultrust-browser-client".into())
+                    .spawn(move || f(file));
+            } else {
+                // SAFETY: closing the failed instance we own.
+                unsafe { CloseHandle(h as _) };
+            }
+            match create(false) {
+                Some(h) => next = h,
+                None => return,
+            }
+        });
+    spawned.is_ok()
+}
+
+#[cfg(not(windows))]
+pub fn serve_pipe(_name: &str, _on_client: impl Fn(std::fs::File) + Send + Sync + 'static) -> bool {
+    false
+}
+
+/// Connect to the pipe `name`, checking that whoever serves it runs as the
+/// current user (so another user can't pose as VaultRust by taking the
+/// name first).
+#[cfg(windows)]
+pub fn connect_pipe(name: &str) -> std::io::Result<std::fs::File> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::Pipes::{GetNamedPipeServerProcessId, WaitNamedPipeW};
+    const ERROR_PIPE_BUSY: i32 = 231;
+    let open = || {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(name)
+    };
+    let file = match open() {
+        Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
+            let wide = run_key::wide(name);
+            // SAFETY: NUL-terminated name; waits up to two seconds.
+            unsafe { WaitNamedPipeW(wide.as_ptr(), 2000) };
+            open()?
+        }
+        r => r?,
+    };
+    let mut pid = 0u32;
+    // SAFETY: `file` is an open pipe handle; `pid` is a valid out pointer.
+    let ok = unsafe { GetNamedPipeServerProcessId(file.as_raw_handle() as _, &mut pid) } != 0;
+    let me = user_sid::current();
+    if !ok || me.is_none() || user_sid::of_process(pid) != me {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "the pipe is served by another user",
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(not(windows))]
+pub fn connect_pipe(_name: &str) -> std::io::Result<std::fs::File> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
+/// The string form ("S-1-5-21-…") of a process's user SID.
+#[cfg(windows)]
+mod user_sid {
+    use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, HANDLE};
+    use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows_sys::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    pub fn current() -> Option<String> {
+        // SAFETY: the pseudo handle for this process needs no closing.
+        of_handle(unsafe { GetCurrentProcess() })
+    }
+
+    pub fn of_process(pid: u32) -> Option<String> {
+        // SAFETY: plain query; the handle is closed below.
+        let h = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if h.is_null() {
+            return None;
+        }
+        let sid = of_handle(h);
+        // SAFETY: `h` was opened above.
+        unsafe { CloseHandle(h) };
+        sid
+    }
+
+    fn of_handle(process: HANDLE) -> Option<String> {
+        let mut token: HANDLE = std::ptr::null_mut();
+        // SAFETY: valid process handle and out pointer; closed below.
+        if unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } == 0 {
+            return None;
+        }
+        // TOKEN_USER plus the SID it points to; u64s keep it aligned.
+        let mut buf = [0u64; 64];
+        let mut len = 0u32;
+        // SAFETY: the buffer's size is passed along; Windows writes at most
+        // that many bytes.
+        let ok = unsafe {
+            GetTokenInformation(
+                token,
+                TokenUser,
+                buf.as_mut_ptr().cast(),
+                std::mem::size_of_val(&buf) as u32,
+                &mut len,
+            )
+        } != 0;
+        // SAFETY: `token` was opened above.
+        unsafe { CloseHandle(token) };
+        if !ok {
+            return None;
+        }
+        // SAFETY: on success the buffer starts with a TOKEN_USER whose SID
+        // pointer points into the same buffer.
+        let user = unsafe { &*(buf.as_ptr() as *const TOKEN_USER) };
+        let mut text: *mut u16 = std::ptr::null_mut();
+        // SAFETY: `text` is LocalAlloc'd by Windows, NUL-terminated, and
+        // freed right after copying.
+        unsafe {
+            if ConvertSidToStringSidW(user.User.Sid, &mut text) == 0 {
+                return None;
+            }
+            let len = (0..).take_while(|&i| *text.add(i) != 0).count();
+            let s = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
+            LocalFree(text.cast());
+            Some(s)
+        }
+    }
+}
+
+/// Set (or with `None`, delete) the default value of a key under
+/// HKEY_CURRENT_USER, creating the key as needed. Deleting removes the key
+/// itself.
+#[cfg(windows)]
+pub fn set_user_registry_default(subkey: &str, value: Option<&str>) -> Result<(), String> {
+    use windows_sys::Win32::System::Registry::{
+        RegDeleteKeyW, RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ,
+    };
+    let key = run_key::wide(subkey);
+    let rc = match value {
+        Some(v) => {
+            let data = run_key::wide(v);
+            // SAFETY: NUL-terminated key and data of the given byte length; a
+            // null value name is the key's default value.
+            unsafe {
+                RegSetKeyValueW(
+                    HKEY_CURRENT_USER,
+                    key.as_ptr(),
+                    std::ptr::null(),
+                    REG_SZ,
+                    data.as_ptr().cast(),
+                    (data.len() * 2) as u32,
+                )
+            }
+        }
+        // SAFETY: NUL-terminated name. ERROR_FILE_NOT_FOUND: already gone.
+        None => match unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, key.as_ptr()) } {
+            2 => 0,
+            rc => rc,
+        },
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(crate::trf!("Windows refused the change (error {rc})", rc))
+    }
+}
+
+/// The default value of a key under HKEY_CURRENT_USER.
+#[cfg(windows)]
+pub fn user_registry_default(subkey: &str) -> Option<String> {
+    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
+    let key = run_key::wide(subkey);
+    let mut buf = vec![0u16; 1024];
+    let mut size = (buf.len() * 2) as u32;
+    // SAFETY: all pointers are valid for the stated sizes; `size` is in bytes.
+    let rc = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            std::ptr::null(),
+            RRF_RT_REG_SZ,
+            std::ptr::null_mut(),
+            buf.as_mut_ptr().cast(),
+            &mut size,
+        )
+    };
+    if rc != 0 {
+        return None;
+    }
+    let len = (size as usize / 2).min(buf.len());
+    Some(
+        String::from_utf16_lossy(&buf[..len])
+            .trim_end_matches('\0')
+            .to_string(),
+    )
+}
+
+#[cfg(not(windows))]
+pub fn set_user_registry_default(_subkey: &str, _value: Option<&str>) -> Result<(), String> {
+    Err("only available on Windows".into())
+}
+
+#[cfg(not(windows))]
+pub fn user_registry_default(_subkey: &str) -> Option<String> {
+    None
+}
+
+#[cfg(all(test, windows))]
+mod pipe_tests {
+    use std::io::{Read, Write};
+
+    #[test]
+    fn pipe_round_trip_and_name_is_exclusive() {
+        let name = format!(r"\\.\pipe\VaultRust-test-{}", std::process::id());
+        assert!(super::serve_pipe(&name, |mut f| {
+            let mut buf = [0u8; 5];
+            f.read_exact(&mut buf).unwrap();
+            buf.reverse();
+            f.write_all(&buf).unwrap();
+        }));
+        // A second server can't take over the name.
+        assert!(!super::serve_pipe(&name, |_| {}));
+        for _ in 0..3 {
+            let mut c = super::connect_pipe(&name).unwrap();
+            c.write_all(b"hello").unwrap();
+            let mut back = [0u8; 5];
+            c.read_exact(&mut back).unwrap();
+            assert_eq!(&back, b"olleh");
+        }
+        assert!(super::browser_pipe_name().unwrap().contains("S-1-"));
+    }
+}

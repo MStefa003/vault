@@ -381,6 +381,41 @@ characters, so they arrive correctly on any keyboard layout.
 * The shortcut is not Ctrl+Alt+…, because on many keyboard layouts Ctrl+Alt is
   AltGr and a system-wide shortcut on it would break typing characters.
 
+## Browser extension
+
+Off until turned on in Settings → Browser extension. The extension
+(`browser-extension/`) never stores vault data; it keeps only a random
+32-byte token that identifies the browser.
+
+* **Who can ask.** The browser starts `VaultRust.exe` as a native messaging
+  host. Its registration (`HKCU\Software\…\NativeMessagingHosts`) allows
+  only the extension's ID, which is fixed by the public key in its manifest.
+  The helper relays each message over a named pipe whose name contains the
+  user's SID and whose DACL grants access to that user only; it is created
+  with `FILE_FLAG_FIRST_PIPE_INSTANCE` and rejects remote clients, and the
+  helper checks that the process serving it runs as the same user, so
+  another user can't pose as VaultRust by taking the name first.
+* **Approval.** A new browser's first request makes VaultRust ask the user,
+  showing a six-digit code derived from the token's SHA-256 that the
+  extension shows too. Only the SHA-256 of approved tokens is kept (in the
+  app preferences, not the vault). Any other token is answered "unpaired".
+  An unpacked extension's ID can be reused by another unpacked extension the
+  user loads, which is why approval exists.
+* **What it gets.** Only while a vault is unlocked: the titles and usernames
+  of logins whose website matches the tab's host or a parent domain of it
+  ("example.com" covers "login.example.com", never the other way round), and
+  the username, password and current one-time code of one of those. The app
+  checks the match again for every fill, never sends an `https` login to an
+  `http` page, and the extension fills only if the page is still on the host
+  VaultRust approved. There is no search or access to other items.
+* **What it can't protect against.** Anything running as the same Windows
+  user can do what the helper does (and much more: read the browser's memory
+  or the screen), as with auto-type. A page's own scripts can read a filled
+  password, as with any password manager that fills forms; filling happens
+  only on request (button or shortcut), never on page load.
+* Replies holding a password are wiped from the app's and the helper's
+  buffers after sending (best effort, like the rest of memory handling).
+
 ## Import and export
 
 * Import (KeePass `.kdbx` 3.1 and 4.x, CSV from Chrome/Edge/Firefox/Bitwarden/

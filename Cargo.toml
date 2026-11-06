@@ -84,7 +84,8 @@ rqrr = { version = "0.11", default-features = false, optional = true }
 # RegisterHotKey + a message loop (global quick-open shortcut) and
 # WerSetFlags / SetErrorMode (keep the heap out of crash reports) and the
 # per-user Run registry value (start with Windows), and
-# GetUserDefaultUILanguage (the default interface language).
+# GetUserDefaultUILanguage (the default interface language), and the named
+# pipe the browser extension's helper uses to reach the running app.
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Globalization",
@@ -101,6 +102,10 @@ windows-sys = { version = "0.61", features = [
     "Win32_Networking_WinHttp",
     "Win32_System_SystemServices",
     "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Pipes",
+    "Win32_System_IO",
+    "Win32_Storage_FileSystem",
 ] }
 # Windows Hello quick unlock (src/hello.rs): a TPM-backed key credential
 # signs a fixed challenge after the user's fingerprint, face or PIN.

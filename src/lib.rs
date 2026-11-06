@@ -12,6 +12,7 @@
 pub mod analysis;
 pub mod autotype;
 pub mod breach;
+pub mod browser;
 #[cfg(feature = "gui")]
 pub mod clipboard;
 pub mod crypto;
