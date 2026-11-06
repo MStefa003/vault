@@ -9,6 +9,8 @@ heading.
 
 ## Unreleased
 
+## 0.4.0 — 2026-11-07
+
 - Browser extension for Chrome, Edge and Brave: click the VaultRust button in the toolbar (or press Alt+Shift+L) to fill in the login for the site you're on. Turn it on in Settings → Browser extension, which shows how to add it. Each browser is approved once in VaultRust, and it only gets the logins for the site in the tab while the vault is unlocked.
 
 ## 0.3.0 — 2026-11-06
