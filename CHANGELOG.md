@@ -9,6 +9,9 @@ heading.
 
 ## Unreleased
 
+- The browser extension now works in Firefox too: Settings → Browser extension → Add to Firefox, then click "Add" when Firefox asks.
+- The welcome tour now shows you around: a spotlight glides to each button it talks about (New item, search, Scan 2FA code, Security, Lock vault, Settings) with a card beside it. Replay it from Settings → App.
+
 ## 0.6.0 — 2026-11-07
 
 - The browser extension fills in payment and address forms: click into a card number or address field and pick a card or identity from the VaultRust menu, or use the new "Cards & IDs" tab in its popup. Card details are only filled into secure (https) pages.

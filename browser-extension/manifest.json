@@ -4,7 +4,15 @@
   "description": "__MSG_description__",
   "version": "2.1.0",
   "default_locale": "en",
-  "minimum_chrome_version": "116",
+  "minimum_chrome_version": "121",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "browser@vaultrust.app",
+      "strict_min_version": "140.0",
+      "update_url": "https://github.com/MStefa003/vault/releases/latest/download/firefox-updates.json",
+      "data_collection_permissions": { "required": ["none"] }
+    }
+  },
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAstbdYWR0YtaS75YoLG+u+HFU3R5cvCIW8Ly6xZum8HxA1aeAoqFkDcLIkF9ltyDQ61zty9+nFstDJssYN1EAdA3jLSvjBorQUrnwwhnd951pXchp77rZB1Tc2sUvqX2hNvz0t1ToydhqYg8aoNmcVM6ci1ju/p9yZE/3lAwQOvWIcZdtxUrFENt9WR1aZ/BA2evH3koCFrYB+EmvyTgugmCMMhfqTm09DSf/4pbZ/LXYoDQSMoLBNsVufh1yredBuXbX5ot8nWcFNEG7CoiT5y2q/7h04qF0MpH2LrZPYwRx2AiuN3XLZ++F8kdeBAe7Ir2sjssC4yUGThdTuwmbrwIDAQAB",
   "icons": {
     "16": "icons/icon-16.png",
@@ -22,6 +30,7 @@
   },
   "background": {
     "service_worker": "background.js",
+    "scripts": ["background.js"],
     "type": "module"
   },
   "permissions": ["nativeMessaging", "storage", "scripting"],

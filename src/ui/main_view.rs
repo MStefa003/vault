@@ -857,10 +857,11 @@ impl MainState {
             .show_separator_line(false)
             .show_inside(ui, |ui| {
                 ui.add_space(6.0);
-                if widgets::secondary_button_wide(ui, &icons::with(icons::LOCK, tr("Lock vault")))
-                    .on_hover_text("Ctrl+L")
-                    .clicked()
-                {
+                let button =
+                    widgets::secondary_button_wide(ui, &icons::with(icons::LOCK, tr("Lock vault")))
+                        .on_hover_text("Ctrl+L");
+                super::tutorial::mark(ui, super::tutorial::Spot::Lock, button.rect);
+                if button.clicked() {
                     lock = true;
                 }
                 let rem = self.autolock.remaining(now).as_secs();
@@ -888,8 +889,16 @@ impl MainState {
                                         label: &str,
                                         badge: Option<(String, egui::Color32)>,
                                         page: Page| {
-                            if widgets::nav_item(ui, icon, label, badge, current == page).clicked()
-                            {
+                            let resp = widgets::nav_item(ui, icon, label, badge, current == page);
+                            let spot = match page {
+                                Page::Security => Some(super::tutorial::Spot::Security),
+                                Page::Settings => Some(super::tutorial::Spot::Settings),
+                                _ => None,
+                            };
+                            if let Some(spot) = spot {
+                                super::tutorial::mark(ui, spot, resp.rect);
+                            }
+                            if resp.clicked() {
                                 nav = Some(Nav::Page(page));
                             }
                         };

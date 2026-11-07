@@ -115,6 +115,7 @@ fn new_item_button(ui: &mut egui::Ui, acts: &mut Vec<Act>) {
         ui,
         &trf!("{}  New item  {}", icons::PLUS, icons::CARET_DOWN),
     );
+    super::tutorial::mark(ui, super::tutorial::Spot::NewItem, resp.rect);
     egui::Popup::menu(&resp).show(|ui| {
         ui.set_min_width(180.0);
         for k in EntryKind::ALL {
@@ -136,13 +137,14 @@ fn top_bar(ui: &mut egui::Ui, query: &mut String, count: usize, acts: &mut Vec<A
         |ui| {
             new_item_button(ui, acts);
             ui.add_space(4.0);
-            if widgets::secondary_button(ui, &icons::with(icons::QR_CODE, tr("Scan 2FA code")))
-                .on_hover_text(tr(
-                    "Setting up two-step verification? Show the site's QR code on screen and \
-                     VaultRust adds the code to the matching login",
-                ))
-                .clicked()
-            {
+            let scan =
+                widgets::secondary_button(ui, &icons::with(icons::QR_CODE, tr("Scan 2FA code")))
+                    .on_hover_text(tr(
+                        "Setting up two-step verification? Show the site's QR code on screen and \
+                         VaultRust adds the code to the matching login",
+                    ));
+            super::tutorial::mark(ui, super::tutorial::Spot::ScanQr, scan.rect);
+            if scan.clicked() {
                 acts.push(Act::ScanQr);
             }
             ui.add_space(20.0);
@@ -183,6 +185,11 @@ fn top_bar(ui: &mut egui::Ui, query: &mut String, count: usize, acts: &mut Vec<A
         row.x_range(),
         row.bottom() + 6.0,
         Stroke::new(stroke_w, color),
+    );
+    super::tutorial::mark(
+        ui,
+        super::tutorial::Spot::Search,
+        row.with_max_y(row.bottom() + 6.0),
     );
     ui.add_space(6.0);
 }

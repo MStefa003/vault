@@ -24,6 +24,22 @@ and its public half is compiled into `src/update.rs` (`PUBLIC_KEY`).
    key means users must install the next version by hand; if it leaks, anyone
    could sign updates, so rotate it the same way.
 
+## One-time setup: signing the Firefox add-on
+
+Firefox only installs add-ons signed by Mozilla, so each release has the
+add-on signed as a self-distributed ("unlisted") one; it is not listed on
+addons.mozilla.org, and signing is usually automatic and takes minutes.
+
+1. Sign in at [addons.mozilla.org](https://addons.mozilla.org/developers/)
+   (a free Mozilla account) and open **Tools → Manage API Keys**. Generate
+   credentials.
+2. Add two repository secrets as above: `AMO_JWT_ISSUER` (the "JWT issuer")
+   and `AMO_JWT_SECRET` (the "JWT secret").
+
+Without them, releases are still published but without the Firefox add-on,
+and "Add to Firefox" in the app falls back to a page with manual steps
+(which only work for a released add-on, or as a temporary add-on).
+
 ## Publishing a release
 
 First write what's new under `## Unreleased` in `CHANGELOG.md`: a few
@@ -44,6 +60,9 @@ installer with Inno Setup (`installer/vaultrust.iss`) and publishes:
 * `VaultRust-Setup-0.2.0.exe` — what people download and run;
 * `VaultRust.exe` and `VaultRust.exe.sig` — what installed copies update
   themselves from;
+* `VaultRust-Firefox.xpi` and `firefox-updates.json` — the signed Firefox
+  add-on, which "Add to Firefox" downloads, and what installed add-ons
+  update from (the manifest's `update_url`);
 * `SHA256SUMS.txt`.
 
 ## Windows SmartScreen

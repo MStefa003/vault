@@ -840,6 +840,8 @@ fn app_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
             |ui| tour = widgets::secondary_button(ui, tr("Show the tour again")).clicked(),
         );
         if tour {
+            // It points at the Overview's buttons.
+            ms.page = super::main_view::Page::Dashboard;
             ms.tour = Some(super::tutorial::Tour::default());
         }
         widgets::divider(ui, 16.0);

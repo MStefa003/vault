@@ -97,6 +97,7 @@ async function pairingCode() {
 }
 
 function browserName() {
+  if (/\bFirefox\//.test(navigator.userAgent)) return "Firefox";
   const brands = navigator.userAgentData?.brands?.map((b) => b.brand) ?? [];
   for (const name of ["Microsoft Edge", "Brave", "Opera", "Vivaldi", "Google Chrome"]) {
     if (brands.includes(name)) return name.replace("Google ", "");

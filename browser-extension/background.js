@@ -24,9 +24,10 @@ function connect() {
   const conn = { port, queue: [], closed: false };
   port.onMessage.addListener((msg) => conn.queue.shift()?.(msg));
   port.onDisconnect.addListener(() => {
-    const why = chrome.runtime.lastError?.message ?? "";
+    // Firefox reports why on the port, Chromium in lastError.
+    const why = port.error?.message ?? chrome.runtime.lastError?.message ?? "";
     // The helper isn't registered for this browser (or was removed).
-    const error = /not found|forbidden|access/i.test(why) ? "no_host" : "no_reply";
+    const error = /not found|forbidden|access|no such native/i.test(why) ? "no_host" : "no_reply";
     conn.closed = true;
     for (const answer of conn.queue.splice(0)) answer({ error });
     if (link === conn) link = null;

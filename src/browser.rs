@@ -45,6 +45,22 @@ pub const EXTENSION_ID: &str = "kbbgmknjmnadcnmfllepkafdammfomco";
 /// Extensions allowed to start the helper.
 pub const ALLOWED_EXTENSIONS: &[&str] = &[EXTENSION_ID];
 
+/// The Firefox add-on's ID (`browser_specific_settings.gecko.id` in the
+/// manifest), which Firefox allows to start the helper.
+pub const FIREFOX_EXTENSION_ID: &str = "browser@vaultrust.app";
+
+/// Firefox only adds extensions signed by Mozilla, so the add-on is signed
+/// when a release is made (docs/RELEASING.md) and downloaded from there.
+pub fn firefox_addon_url() -> String {
+    format!(
+        "https://github.com/{}/releases/latest/download/VaultRust-Firefox.xpi",
+        crate::update::REPO
+    )
+}
+
+/// The signed add-on is far smaller than this.
+const MAX_ADDON: usize = 5 * 1024 * 1024;
+
 /// Requests and replies are small; anything bigger is refused.
 const MAX_MESSAGE: usize = 64 * 1024;
 
@@ -726,11 +742,11 @@ pub fn serve(link: Arc<Link>) -> bool {
 // --- The helper the browser starts.
 
 /// Whether the program was started by a browser as the extension's helper
-/// (Chromium passes the extension's origin).
+/// (Chromium passes the extension's origin, Firefox the add-on's ID).
 pub fn is_host_invocation(args: &[String]) -> bool {
     args.iter()
         .skip(1)
-        .any(|a| a.starts_with("chrome-extension://"))
+        .any(|a| a.starts_with("chrome-extension://") || a == FIREFOX_EXTENSION_ID)
 }
 
 /// Run as the extension's helper: relay each message from the browser to
@@ -829,15 +845,18 @@ pub struct Browser {
     registry: &'static str,
     /// Install folders under Program Files / Local AppData.
     folder: &'static str,
+    /// Firefox: its helper manifest, and how the extension is added, differ.
+    pub firefox: bool,
 }
 
-pub const BROWSERS: [Browser; 3] = [
+pub const BROWSERS: [Browser; 4] = [
     Browser {
         name: "Chrome",
         exe: "chrome.exe",
         extensions_page: "chrome://extensions",
         registry: r"Software\Google\Chrome\NativeMessagingHosts",
         folder: r"Google\Chrome\Application",
+        firefox: false,
     },
     Browser {
         name: "Edge",
@@ -845,6 +864,7 @@ pub const BROWSERS: [Browser; 3] = [
         extensions_page: "edge://extensions",
         registry: r"Software\Microsoft\Edge\NativeMessagingHosts",
         folder: r"Microsoft\Edge\Application",
+        firefox: false,
     },
     Browser {
         name: "Brave",
@@ -852,6 +872,15 @@ pub const BROWSERS: [Browser; 3] = [
         extensions_page: "brave://extensions",
         registry: r"Software\BraveSoftware\Brave-Browser\NativeMessagingHosts",
         folder: r"BraveSoftware\Brave-Browser\Application",
+        firefox: false,
+    },
+    Browser {
+        name: "Firefox",
+        exe: "firefox.exe",
+        extensions_page: "about:addons",
+        registry: r"Software\Mozilla\NativeMessagingHosts",
+        folder: "Mozilla Firefox",
+        firefox: true,
     },
 ];
 
@@ -960,36 +989,48 @@ pub fn extension_dir() -> Option<PathBuf> {
     Some(data_dir()?.join("Browser extension"))
 }
 
-fn host_manifest_path() -> Option<PathBuf> {
-    Some(data_dir()?.join(format!("{HOST_NAME}.json")))
+/// Firefox and Chromium each want their own host manifest.
+fn host_manifest_path(firefox: bool) -> Option<PathBuf> {
+    let name = if firefox {
+        format!("{HOST_NAME}.firefox.json")
+    } else {
+        format!("{HOST_NAME}.json")
+    };
+    Some(data_dir()?.join(name))
 }
 
-/// The host manifest pointing the browsers at `exe`.
-pub fn host_manifest(exe: &std::path::Path) -> String {
-    let origins: Vec<String> = ALLOWED_EXTENSIONS
-        .iter()
-        .map(|id| format!("chrome-extension://{id}/"))
-        .collect();
-    serde_json::to_string_pretty(&serde_json::json!({
+/// The host manifest pointing the browsers (Chromium ones, or Firefox) at
+/// `exe`.
+pub fn host_manifest(exe: &std::path::Path, firefox: bool) -> String {
+    let mut m = serde_json::json!({
         "name": HOST_NAME,
         "description": "VaultRust",
         "path": exe,
         "type": "stdio",
-        "allowed_origins": origins,
-    }))
-    .unwrap_or_default()
+    });
+    if firefox {
+        m["allowed_extensions"] = serde_json::json!([FIREFOX_EXTENSION_ID]);
+    } else {
+        let origins: Vec<String> = ALLOWED_EXTENSIONS
+            .iter()
+            .map(|id| format!("chrome-extension://{id}/"))
+            .collect();
+        m["allowed_origins"] = origins.into();
+    }
+    serde_json::to_string_pretty(&m).unwrap_or_default()
 }
 
-fn registry_keys() -> impl Iterator<Item = String> {
+/// Each registry key, and whether it is Firefox's.
+fn registry_keys() -> impl Iterator<Item = (String, bool)> {
     BROWSERS
         .iter()
-        .map(|b| b.registry)
-        .chain([CHROMIUM_KEY])
-        .map(|k| format!(r"{k}\{HOST_NAME}"))
+        .map(|b| (b.registry, b.firefox))
+        .chain([(CHROMIUM_KEY, false)])
+        .map(|(k, firefox)| (format!(r"{k}\{HOST_NAME}"), firefox))
 }
 
 /// Write the extension's files and register this program as its helper
-/// with every Chromium browser. Safe to repeat (it is, at every start, so a
+/// with every Chromium browser and Firefox. Safe to repeat (it is, at every start, so a
 /// moved or updated program stays registered). Returns the extension folder.
 pub fn install() -> Result<PathBuf, String> {
     let failed = |e: io::Error| crate::trf!("Couldn't set up the browser extension: {e}", e);
@@ -1009,11 +1050,13 @@ pub fn install() -> Result<PathBuf, String> {
         let _ = std::fs::remove_file(dir.join(old));
     }
     let exe = std::env::current_exe().map_err(failed)?;
-    let manifest = host_manifest_path().ok_or_else(no_dir)?;
-    std::fs::write(&manifest, host_manifest(&exe)).map_err(failed)?;
-    let manifest = manifest.to_string_lossy();
-    for key in registry_keys() {
-        crate::os_protect::set_user_registry_default(&key, Some(&manifest))?;
+    for firefox in [false, true] {
+        let manifest = host_manifest_path(firefox).ok_or_else(no_dir)?;
+        std::fs::write(&manifest, host_manifest(&exe, firefox)).map_err(failed)?;
+    }
+    for (key, firefox) in registry_keys() {
+        let manifest = host_manifest_path(firefox).ok_or_else(no_dir)?;
+        crate::os_protect::set_user_registry_default(&key, Some(&manifest.to_string_lossy()))?;
     }
     Ok(dir)
 }
@@ -1022,13 +1065,34 @@ pub fn install() -> Result<PathBuf, String> {
 /// set up). The extension's folder is left for the browser to keep using
 /// until the user removes it there.
 pub fn uninstall() -> Result<(), String> {
-    for key in registry_keys() {
+    for (key, _) in registry_keys() {
         crate::os_protect::set_user_registry_default(&key, None)?;
     }
-    if let Some(m) = host_manifest_path() {
+    for m in [false, true].into_iter().filter_map(host_manifest_path) {
         let _ = std::fs::remove_file(m);
     }
     Ok(())
+}
+
+/// Download the signed add-on and open it in Firefox, which asks whether to
+/// add it. Blocks on the network, so run it off the window thread.
+pub fn add_to_firefox(firefox: &Browser) -> Result<(), String> {
+    let data =
+        crate::os_protect::http_get(&firefox_addon_url(), MAX_ADDON).map_err(|e| e.to_string())?;
+    // An .xpi is a zip file; anything else is an error page.
+    if !data.starts_with(b"PK") {
+        return Err(crate::i18n::tr("The download isn't a Firefox add-on").to_string());
+    }
+    let path = data_dir()
+        .ok_or_else(|| crate::i18n::tr("No folder for app data").to_string())?
+        .join("VaultRust-Firefox.xpi");
+    std::fs::write(&path, data).map_err(|e| e.to_string())?;
+    if firefox.open(&path) {
+        Ok(())
+    } else {
+        let name = firefox.name;
+        Err(crate::trf!("Couldn't open {name}", name))
+    }
 }
 
 #[cfg(test)]
@@ -1420,6 +1484,12 @@ mod tests {
             "vaultrust.exe".into(),
             format!("chrome-extension://{EXTENSION_ID}/"),
         ]));
+        // Firefox passes the host manifest's path and the add-on's ID.
+        assert!(is_host_invocation(&[
+            "vaultrust.exe".into(),
+            r"C:\Users\you\AppData\Local\VaultRust\com.vaultrust.browser.firefox.json".into(),
+            FIREFOX_EXTENSION_ID.into(),
+        ]));
         assert!(!is_host_invocation(&[
             "vaultrust.exe".into(),
             "--startup".into()
@@ -1435,6 +1505,9 @@ mod tests {
         assert_eq!(site_title("https://accounts.google.com/"), "Google");
         assert!(BROWSERS[1].is("Microsoft Edge"));
         assert!(!BROWSERS[0].is("Microsoft Edge"));
+        let firefox: Vec<_> = BROWSERS.iter().filter(|b| b.firefox).collect();
+        assert_eq!(firefox.len(), 1);
+        assert!(firefox[0].is("Firefox"));
     }
 
     /// Every message the extension shows exists in English and Greek.
@@ -1480,18 +1553,29 @@ mod tests {
 
     #[test]
     fn host_manifest_allows_only_the_extension() {
-        let m: serde_json::Value = serde_json::from_str(&host_manifest(std::path::Path::new(
-            r"C:\Apps\VaultRust.exe",
-        )))
-        .unwrap();
+        let exe = std::path::Path::new(r"C:\Apps\VaultRust.exe");
+        let m: serde_json::Value = serde_json::from_str(&host_manifest(exe, false)).unwrap();
         assert_eq!(m["name"], HOST_NAME);
         assert_eq!(m["path"], r"C:\Apps\VaultRust.exe");
         assert_eq!(
             m["allowed_origins"][0],
             format!("chrome-extension://{EXTENSION_ID}/")
         );
-        // The built-in copy of the extension has the key that gives it this ID.
+        assert!(m.get("allowed_extensions").is_none());
+        let m: serde_json::Value = serde_json::from_str(&host_manifest(exe, true)).unwrap();
+        assert_eq!(m["name"], HOST_NAME);
+        assert_eq!(
+            m["allowed_extensions"],
+            serde_json::json!([FIREFOX_EXTENSION_ID])
+        );
+        assert!(m.get("allowed_origins").is_none());
+        // The built-in copy of the extension has the key that gives it this
+        // ID in Chromium, and the add-on ID Firefox knows it by.
         let manifest: serde_json::Value = serde_json::from_slice(EXTENSION_FILES[0].1).unwrap();
+        assert_eq!(
+            manifest["browser_specific_settings"]["gecko"]["id"],
+            FIREFOX_EXTENSION_ID
+        );
         let key = manifest["key"].as_str().unwrap();
         let der = crate::encoding::base64_decode(key).unwrap();
         let id: String = Sha256::digest(&der[..])[..16]

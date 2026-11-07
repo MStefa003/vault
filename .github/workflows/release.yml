@@ -57,6 +57,34 @@ jobs:
           Compress-Archive -Path browser-extension\* -DestinationPath release\VaultRust-Browser-Extension-${{ steps.version.outputs.version }}.zip
           Get-FileHash release\* -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content release\SHA256SUMS.txt
 
+      # Firefox only installs add-ons signed by Mozilla. The add-on is signed
+      # as a self-distributed ("unlisted") one, versioned like the app, and
+      # installed copies update themselves from firefox-updates.json.
+      - name: Firefox add-on
+        shell: pwsh
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          if (-not $env:AMO_JWT_ISSUER -or -not $env:AMO_JWT_SECRET) {
+            "::warning::No AMO_JWT_ISSUER / AMO_JWT_SECRET secrets: this release has no Firefox add-on (docs/RELEASING.md)"
+            exit 0
+          }
+          $v = "${{ steps.version.outputs.version }}"
+          Copy-Item browser-extension build/firefox -Recurse
+          $manifest = Get-Content build/firefox/manifest.json -Raw -Encoding utf8
+          $manifest = $manifest -replace '"version": "[^"]*"', "`"version`": `"$v`""
+          [IO.File]::WriteAllText("$PWD/build/firefox/manifest.json", $manifest)
+          npx --yes web-ext@8.3.0 sign --channel unlisted --source-dir build/firefox --artifacts-dir build/firefox-signed --api-key $env:AMO_JWT_ISSUER --api-secret $env:AMO_JWT_SECRET
+          if ($LASTEXITCODE -ne 0) { throw "Signing the Firefox add-on failed" }
+          Copy-Item (Get-ChildItem build/firefox-signed/*.xpi | Select-Object -First 1) release/VaultRust-Firefox.xpi
+          @{ addons = @{ "browser@vaultrust.app" = @{ updates = @(@{
+            version = $v
+            update_link = "https://github.com/${{ github.repository }}/releases/download/v$v/VaultRust-Firefox.xpi"
+          }) } } } | ConvertTo-Json -Depth 6 | Set-Content release/firefox-updates.json -Encoding utf8
+          $hash = (Get-FileHash release/VaultRust-Firefox.xpi -Algorithm SHA256).Hash.ToLower()
+          Add-Content release/SHA256SUMS.txt "$hash  VaultRust-Firefox.xpi"
+
       # The version's section of CHANGELOG.md, which the app also shows
       # under "What's new".
       - name: Release notes
@@ -79,4 +107,6 @@ jobs:
             release/VaultRust.exe
             release/VaultRust.exe.sig
             release/VaultRust-Browser-Extension-${{ steps.version.outputs.version }}.zip
+            release/VaultRust-Firefox.xpi
+            release/firefox-updates.json
             release/SHA256SUMS.txt

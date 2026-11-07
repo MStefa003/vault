@@ -328,7 +328,7 @@ pub fn settings_section(ui: &mut egui::Ui, svc: &mut Services) {
             ui,
             &mut on,
             tr("Fill in and save logins in your browser"),
-            tr("Chrome, Edge and Brave, while the vault is unlocked"),
+            tr("Chrome, Edge, Brave and Firefox, while the vault is unlocked"),
         );
         if on != svc.prefs.browser_enabled {
             match svc.browser.set_enabled(on, svc.prefs) {
@@ -347,7 +347,10 @@ pub fn settings_section(ui: &mut egui::Ui, svc: &mut Services) {
             .collect();
         if installed.is_empty() {
             widgets::divider(ui, 16.0);
-            widgets::warning_box(ui, tr("No Chrome, Edge or Brave found on this computer."));
+            widgets::warning_box(
+                ui,
+                tr("No Chrome, Edge, Brave or Firefox found on this computer."),
+            );
         }
         let mut add = None;
         for &i in &installed {
@@ -442,6 +445,10 @@ pub fn settings_section(ui: &mut egui::Ui, svc: &mut Services) {
 /// the browser on a page with the steps. Browsers don't let other programs
 /// install extensions (or even open their extensions page), so the user
 /// finishes with a paste and a drag and drop ([`steps`]).
+///
+/// "Add to Firefox": download the signed add-on and open it in Firefox,
+/// which asks whether to add it; if that fails, open a page with the steps
+/// for adding it by hand.
 fn start_adding(ctx: &egui::Context, svc: &mut Services, i: usize) {
     let b = &BROWSERS[i];
     svc.browser.adding = Some(i);
@@ -455,6 +462,19 @@ fn start_adding(ctx: &egui::Context, svc: &mut Services, i: usize) {
             return;
         }
     };
+    if b.firefox {
+        let page = browser::setup_page_path()
+            .filter(|p| std::fs::write(p, firefox_setup_page(&dir)).is_ok());
+        let b = *b;
+        std::thread::spawn(move || {
+            if browser::add_to_firefox(&b).is_err() {
+                if let Some(p) = page {
+                    b.open(&p);
+                }
+            }
+        });
+        return;
+    }
     ctx.copy_text(b.extensions_page.to_string());
     browser::show_extension_folder();
     let page =
@@ -473,27 +493,29 @@ fn developer_mode_place(b: &browser::Browser) -> &'static str {
     }
 }
 
+/// One numbered step of a setup page, with a value to copy.
+fn page_step(n: u32, text: &str, value: Option<&str>) -> String {
+    use browser::html_escape as esc;
+    let copy = esc(tr("Copy"));
+    let value = value.map_or(String::new(), |v| {
+        format!(
+            r#"<div class="value"><code>{v}</code><button data-copy="{v}">{copy}</button></div>"#,
+            v = esc(v)
+        )
+    });
+    format!(
+        r#"<li><span class="n">{n}</span><div>{}{value}</div></li>"#,
+        esc(text)
+    )
+}
+
 /// The steps for adding the extension, as a page opened in the browser.
 pub(super) fn setup_page(b: &browser::Browser, dir: &std::path::Path) -> String {
-    use browser::html_escape as esc;
     let name = b.name;
     let page = b.extensions_page;
     let developer = developer_mode_place(b);
     let folder = dir.display().to_string();
-    let copy = esc(tr("Copy"));
-    let copied = esc(tr("Copied"));
-    let step = |n: u32, text: String, value: Option<&str>| {
-        let value = value.map_or(String::new(), |v| {
-            format!(
-                r#"<div class="value"><code>{v}</code><button data-copy="{v}">{copy}</button></div>"#,
-                v = esc(v)
-            )
-        });
-        format!(
-            r#"<li><span class="n">{n}</span><div>{}{value}</div></li>"#,
-            esc(&text)
-        )
-    };
+    let step = |n: u32, text: String, value: Option<&str>| page_step(n, &text, value);
     let steps = [
         step(1, trf!("Copy this address into {name}'s address bar and press Enter (it's already on the clipboard):", name), Some(page)),
         step(2, trf!("On that page, turn on “Developer mode” {developer}.", developer), None),
@@ -501,6 +523,38 @@ pub(super) fn setup_page(b: &browser::Browser, dir: &std::path::Path) -> String 
         step(4, tr("Click the puzzle piece in the toolbar and pin VaultRust. Then click its button and choose “Connect to VaultRust”; VaultRust asks you to allow it.").to_string(), None),
     ]
     .join("");
+    page_html(
+        &trf!("Add VaultRust to {name}", name),
+        tr("Browsers only let you add extensions from outside their store by hand. It takes a minute, once."),
+        &steps,
+    )
+}
+
+/// What Firefox shows when VaultRust couldn't download the add-on: get it
+/// by hand, or (for a version not released yet) load it from the folder
+/// until Firefox closes.
+pub(super) fn firefox_setup_page(dir: &std::path::Path) -> String {
+    let url = browser::firefox_addon_url();
+    let manifest = dir.join("manifest.json").display().to_string();
+    let steps = [
+        page_step(1, tr("Download the VaultRust add-on from this address:"), Some(&url)),
+        page_step(2, tr("Open this page, click the gear button and choose “Install Add-on From File…”. Pick the downloaded VaultRust-Firefox.xpi and click “Add”."), Some("about:addons")),
+        page_step(3, tr("Click the puzzle piece in the toolbar and pin VaultRust. Then click its button and choose “Connect to VaultRust”; VaultRust asks you to allow it."), None),
+        page_step(4, tr("Trying a version that isn't released yet? On about:debugging, under “This Firefox”, click “Load Temporary Add-on…” and choose this file. Firefox removes it again when it closes."), Some(&manifest)),
+    ]
+    .join("");
+    page_html(
+        tr("Add VaultRust to Firefox"),
+        tr("VaultRust couldn't download the Firefox add-on. You can add it by hand:"),
+        &steps,
+    )
+}
+
+/// A setup page around its numbered steps.
+fn page_html(title: &str, intro: &str, steps: &str) -> String {
+    use browser::html_escape as esc;
+    let copy = esc(tr("Copy"));
+    let copied = esc(tr("Copied"));
     format!(
         r#"<!doctype html>
 <html lang="{lang}"><head><meta charset="utf-8"><title>{title}</title>
@@ -531,8 +585,8 @@ for (const b of document.querySelectorAll("button[data-copy]")) {{
 </script></body></html>
 "#,
         lang = crate::i18n::language().key(),
-        title = esc(&trf!("Add VaultRust to {name}", name)),
-        intro = esc(tr("Browsers only let you add extensions from outside their store by hand. It takes a minute, once.")),
+        title = esc(title),
+        intro = esc(intro),
     )
 }
 
@@ -542,7 +596,13 @@ fn steps(ui: &mut egui::Ui, svc: &mut Services, i: usize) {
     let name = b.name;
     let page = b.extensions_page;
     let developer = developer_mode_place(b);
-    let items = [
+    let firefox_items = [
+        tr("Firefox asks whether to add VaultRust: click “Add”. (If it opened a page with steps instead, the download didn't work; follow the steps there.)")
+            .to_string(),
+        tr("Click the puzzle piece in the toolbar, pin VaultRust, then click its button and choose “Connect to VaultRust”. VaultRust asks you to allow it.")
+            .to_string(),
+    ];
+    let chromium_items = [
         trf!(
             "{name} opened a page with these steps. Paste {page} into its address bar (it's on the clipboard) and turn on “Developer mode” {developer}.",
             name,
@@ -554,6 +614,21 @@ fn steps(ui: &mut egui::Ui, svc: &mut Services, i: usize) {
         tr("Click the puzzle piece in the toolbar, pin VaultRust, then click its button and choose “Connect to VaultRust”. VaultRust asks you to allow it.")
             .to_string(),
     ];
+    let (items, note): (&[String], _) = if b.firefox {
+        (
+            &firefox_items,
+            tr("Firefox only adds extensions signed by Mozilla, so VaultRust downloads the signed add-on from its releases on GitHub."),
+        )
+    } else {
+        (
+            &chromium_items,
+            tr(
+                "Browsers only let you add extensions from outside their store this way. \
+                 Edge and Chrome may remind you that developer-mode extensions are on; \
+                 choose to keep it.",
+            ),
+        )
+    };
     ui.add_space(6.0);
     let mut done = false;
     let mut again = false;
@@ -580,11 +655,7 @@ fn steps(ui: &mut egui::Ui, svc: &mut Services, i: usize) {
                 });
                 ui.add_space(4.0);
             }
-            ui.label(faint(tr(
-                "Browsers only let you add extensions from outside their store this way. \
-                 Edge and Chrome may remind you that developer-mode extensions are on; \
-                 choose to keep it.",
-            )));
+            ui.label(faint(note));
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 again = widgets::secondary_button(

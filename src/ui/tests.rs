@@ -431,15 +431,15 @@ fn welcome_tour_shows_once_and_is_remembered() {
         h.step();
     }
     h.get_by_label("Welcome to VaultRust");
-    for _ in 0..5 {
+    for _ in 0..7 {
         h.get_by_label("Next").click();
         // The dialog re-centres over a few frames when its height changes.
         for _ in 0..5 {
             h.step();
         }
     }
-    assert_eq!(main_state(&mut h).tour.as_ref().map(|t| t.step), Some(5));
-    h.get_by_label("Stay safe");
+    assert_eq!(main_state(&mut h).tour.as_ref().map(|t| t.step), Some(7));
+    h.get_by_label("Make it yours");
     h.get_by_label("Get started").click();
     h.step();
     h.step();
@@ -1013,8 +1013,8 @@ fn render_screenshots() {
     shoot(&mut h, "27-new-login");
     main_state(&mut h).items.editor = None;
     main_state(&mut h).page = Page::Dashboard;
-    for step in [0, 3, 5] {
-        main_state(&mut h).tour = Some(super::tutorial::Tour { step });
+    for step in [0, 1, 2, 4, 5, 6, 7] {
+        main_state(&mut h).tour = Some(super::tutorial::Tour::at(step));
         shoot(&mut h, &format!("29-tour-{step}"));
     }
     main_state(&mut h).tour = None;

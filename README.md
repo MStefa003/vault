@@ -12,7 +12,8 @@ code-signed yet: choose **More info → Run anyway**.
 * **One encrypted file.** Your vault is a single `.vault` file stored wherever
   you choose. No database, no cloud, no account, no telemetry. Your vault never
   leaves your computer; the only network use is an optional daily check for
-  signed updates on GitHub.
+  signed updates on GitHub (and downloading the Firefox add-on from there
+  when you click "Add to Firefox").
 * **Modern cryptography.** Argon2id key derivation, XChaCha20-Poly1305
   authenticated encryption, a random 256-bit vault key, OS-provided randomness
   and memory wiping on lock. See [docs/SECURITY.md](docs/SECURITY.md).
@@ -67,7 +68,7 @@ code-signed yet: choose **More info → Run anyway**.
   VaultRust types username, Tab, password, Enter. Shift+Enter types only the
   password, Ctrl+Enter the one-time code. Items can have their own sequence,
   e.g. `{USERNAME}{ENTER}{DELAY 1500}{PASSWORD}{ENTER}` for two-page logins
-* **Browser extension** for Chrome, Edge and Brave, working with the app:
+* **Browser extension** for Chrome, Edge, Brave and Firefox, working with the app:
   logins appear in a menu when you click into a login field; it offers to
   save new logins and update changed passwords after you sign in; payment
   and address forms are filled from your cards and identities; the
@@ -206,6 +207,11 @@ The extension isn't in the browsers' stores; VaultRust adds it:
 4. Pin VaultRust from the puzzle-piece menu, click its button and choose
    **Connect to VaultRust**. VaultRust asks whether to allow the browser and
    shows a six-digit code; allow it if the extension shows the same code.
+
+**Firefox** is simpler: **Add to Firefox** downloads the add-on (signed by
+Mozilla, from this project's GitHub releases) and opens it in Firefox, which
+asks whether to add it. Then pin it and connect as in step 4. It updates
+itself with each release. Firefox 140 or newer is needed.
 
 Browsers don't let programs install extensions from outside their stores by
 themselves (only company-managed PCs can), so the last steps are the user's.
