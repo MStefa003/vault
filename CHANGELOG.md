@@ -9,6 +9,8 @@ heading.
 
 ## Unreleased
 
+## 0.7.0 — 2026-11-07
+
 - The browser extension now works in Firefox too: Settings → Browser extension → Add to Firefox, then click "Add" when Firefox asks.
 - The welcome tour now shows you around: a spotlight glides to each button it talks about (New item, search, Scan 2FA code, Security, Lock vault, Settings) with a card beside it. Replay it from Settings → App.
 
