@@ -412,14 +412,24 @@ with until they choose whether to save it.
   shown in an extension frame, which the page's scripts can't read. A page's
   own scripts can read a password once it is filled in, as with any
   password manager that fills forms.
+* **Cards and addresses.** Card and identity items aren't tied to a site,
+  so they are filled only when the user picks one from the menu in a
+  payment or address field (or from the toolbar popup), into the frame
+  that field is in. Card details (number, expiry, security code, name; never
+  the PIN) are sent only to `https` pages (and `http://localhost`).
+  Identities send name, email, phone and postal address; ID, passport and
+  tax numbers are never sent. Lists show only titles, the card's network
+  and last four digits and expiry, or a name and city.
 * **What the extension itself can get.** An approved browser's extension
   can, while the vault is unlocked, search all items (titles, usernames,
   websites and whether they have a password or code; no secrets), ask the
-  app to copy an item's username, password or code (the app copies it with
+  app to copy an item's username, password or code, or a card's number or
+  security code (the app copies it with
   the same clipboard protection as its own Copy buttons; the secret never
   goes to the browser), save a login for the site of the current tab or
   update the password of a login of that site (the old one goes to the
-  item's history), open the app's editor for a new login, get a generated
+  item's history), open the app's editor for a new login, card or
+  identity, fill a card or identity into a page as above, get a generated
   password, and lock the vault. It can't read notes, other fields,
   attachments or history, delete items or change settings.
 * **What it can't protect against.** Anything running as the same Windows

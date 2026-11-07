@@ -748,6 +748,34 @@ fn import_skips_identical_items_and_updates_changed_passwords() {
 }
 
 #[test]
+fn update_notification_offers_the_update_and_whats_new() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(unlocked_app(&dir.path().join("Update.vault")));
+    let json = br#"{"tag_name":"v99.0.0","body":"- Something new","assets":[
+        {"name":"VaultRust.exe","browser_download_url":"https://github.com/x/VaultRust.exe"},
+        {"name":"VaultRust.exe.sig","browser_download_url":"https://github.com/x/VaultRust.exe.sig"}]}"#;
+    h.state_mut().updates.available =
+        crate::update::parse_latest(json, crate::update::Version(0, 1, 0)).unwrap();
+    h.run();
+    h.get_by_label(crate::i18n::tr("Update available"));
+    h.get_by_label("Something new");
+    h.get_by_label(crate::i18n::tr("What's new")).click();
+    h.run();
+    // The window lists the new version's notes and the installed versions.
+    h.get_by_label("99.0.0");
+    h.get_by_label(env!("CARGO_PKG_VERSION"));
+    h.get_by_label(crate::i18n::tr("Close")).click();
+    h.run();
+    h.get_by_label(crate::i18n::tr("Later")).click();
+    h.run();
+    assert!(h
+        .query_by_label(crate::i18n::tr("Update available"))
+        .is_none());
+    // Still offered in Settings.
+    assert!(h.state().updates.available.is_some());
+}
+
+#[test]
 fn welcome_screen_renders() {
     let mut h = harness(VaultRustApp::with_screen(
         Screen::Welcome(welcome::WelcomeState),
@@ -992,14 +1020,22 @@ fn render_screenshots() {
     main_state(&mut h).tour = None;
     main_state(&mut h).items.editor = None;
     main_state(&mut h).page = Page::Dashboard;
-    let json = br#"{"tag_name":"v0.2.0","body":"- Scan 2FA QR codes","assets":[
+    let json = br#"{"tag_name":"v9.1.0","body":"- Fill in cards and addresses from the browser extension\n- A notification when a new version is out, and What's new in Settings\n- Faster search in large vaults\n- Smaller fixes","assets":[
         {"name":"VaultRust.exe","browser_download_url":"https://github.com/x/VaultRust.exe"},
         {"name":"VaultRust.exe.sig","browser_download_url":"https://github.com/x/VaultRust.exe.sig"}]}"#;
     h.state_mut().updates.available =
         crate::update::parse_latest(json, crate::update::Version(0, 1, 0)).unwrap();
-    shoot(&mut h, "28-update-banner");
+    shoot(&mut h, "28-update-available");
     h.get_by_label(crate::i18n::tr("Update and restart"));
-    h.state_mut().updates.available = None;
+    h.state_mut().updates.open_release_notes();
+    shoot(&mut h, "28b-update-notes");
+    h.state_mut().updates = Default::default();
+    h.state_mut().updates.pretend_updated();
+    shoot(&mut h, "28c-updated");
+    h.state_mut().updates = Default::default();
+    h.state_mut().updates.open_changelog();
+    shoot(&mut h, "28d-changelog");
+    h.state_mut().updates = Default::default();
     main_state(&mut h).page = Page::Dashboard;
     main_state(&mut h).modal = Some(Modal::QuickOpen(QuickOpenState::new(false)));
     shoot(&mut h, "17-quick-open");

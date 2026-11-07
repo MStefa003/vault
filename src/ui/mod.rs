@@ -655,9 +655,11 @@ impl VaultRustApp {
         if let Some(err) = self.updates.tick(ctx, &mut self.prefs) {
             self.toasts.error(err);
         }
-        if self.updates.banner(ctx) {
+        let (install, lift) = self.updates.show(ctx);
+        if install {
             self.updates.install_now(ctx);
         }
+        self.toasts.lift = lift;
         if std::mem::take(&mut self.updates.installed) {
             self.restart_after_update(ctx);
             return;

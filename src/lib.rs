@@ -10,6 +10,7 @@
 #![deny(unsafe_code)]
 
 pub mod analysis;
+pub mod autofill;
 pub mod autotype;
 pub mod breach;
 pub mod browser;

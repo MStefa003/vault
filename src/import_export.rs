@@ -506,21 +506,17 @@ fn bitwarden_item(item: &Value) -> Option<Entry> {
             set_label(&mut e, "Full name", &name);
             set_label(&mut e, "Email", id("email"));
             set_label(&mut e, "Phone", id("phone"));
-            let addr = [
-                id("address1"),
-                id("address2"),
-                id("address3"),
-                id("city"),
-                id("state"),
-                id("postalCode"),
-                id("country"),
-            ]
-            .iter()
-            .filter(|p| !p.is_empty())
-            .copied()
-            .collect::<Vec<_>>()
-            .join("\n");
+            let addr = [id("address1"), id("address2"), id("address3")]
+                .iter()
+                .filter(|p| !p.is_empty())
+                .copied()
+                .collect::<Vec<_>>()
+                .join("\n");
             set_label(&mut e, "Address", &addr);
+            set_label(&mut e, "City", id("city"));
+            set_label(&mut e, "State / region", id("state"));
+            set_label(&mut e, "Postal code", id("postalCode"));
+            set_label(&mut e, "Country", id("country"));
             set_label(&mut e, "ID / passport number", id("passportNumber"));
             set_label(&mut e, "Tax / social security number", id("ssn"));
             if !id("licenseNumber").is_empty() {

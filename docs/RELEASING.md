@@ -1,8 +1,8 @@
 # Releasing VaultRust
 
 Installed copies of VaultRust check
-[GitHub releases](https://github.com/MStefa003/vault/releases) once a day and
-offer to update. Releases must be **signed**; an unsigned or wrongly signed
+[GitHub releases](https://github.com/MStefa003/vault/releases) twice a day and
+show a notification offering the update. Releases must be **signed**; an unsigned or wrongly signed
 release is ignored by the app.
 
 ## One-time setup: the signing key
@@ -28,9 +28,9 @@ and its public half is compiled into `src/update.rs` (`PUBLIC_KEY`).
 
 First write what's new under `## Unreleased` in `CHANGELOG.md`: a few
 short, plain bullet points for the people using VaultRust. That section
-becomes the release notes on GitHub and what the app shows under "What's
-new" (the first 1200 characters), and the script refuses to release without
-it. Then run
+becomes the release notes on GitHub, the points the update notification
+shows (the first three) and the version's entry in the app's "What's new"
+window, and the script refuses to release without it. Then run
 
 ```text
 powershell -ExecutionPolicy Bypass -File scripts\release.ps1 0.2.0

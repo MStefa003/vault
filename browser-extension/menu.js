@@ -1,5 +1,6 @@
-// The menu under a login field: the site's logins, a generated password
-// for sign-up forms, or what to do when VaultRust can't answer.
+// The menu under a login, card or address field: the site's logins, a
+// generated password for sign-up forms, the vault's cards or identities, or
+// what to do when VaultRust can't answer.
 import { el, explain, icon, itemRow, send, t } from "./shared.js";
 
 const main = document.getElementById("main");
@@ -31,6 +32,7 @@ async function refresh() {
     }
     return show(...nodes);
   }
+  if (data.form) return showForms(data);
   const rows = [];
   if (data.newPassword) {
     rows.push(
@@ -60,6 +62,33 @@ async function refresh() {
   }
   nodes.push(el("div", { class: "foot" }, action("plus", t("addLogin"), () => send({ type: "menuNew" }))));
   show(...nodes);
+}
+
+/// Cards (in a payment form) or identities (in an address form).
+function showForms(data) {
+  const card = data.form === "card";
+  const items = data.items ?? [];
+  const nodes = [];
+  if (data.insecure) {
+    const [title, text] = explain("insecure");
+    nodes.push(el("p", { class: "message" }, el("strong", {}, title), text));
+  } else if (!items.length) {
+    nodes.push(el("p", { class: "message" }, t(card ? "noCards" : "noIdentities")));
+  } else {
+    nodes.push(el("div", { class: "rows" }, ...items.map((item) => itemRow(item, { onclick: () => chooseForm(item.id) }))));
+  }
+  nodes.push(
+    el("div", { class: "foot" }, action("plus", t(card ? "addCard" : "addIdentity"), () => send({ type: "menuNew" }))),
+  );
+  show(...nodes);
+}
+
+async function chooseForm(id) {
+  const r = await send({ type: "menuFillForm", id });
+  if (r.error) {
+    const [title, text] = explain(r.error);
+    show(el("p", { class: "message error" }, el("strong", {}, title), text));
+  }
 }
 
 async function choose(id) {

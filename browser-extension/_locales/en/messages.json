@@ -73,5 +73,22 @@
   "notNow": { "message": "Not now" },
   "never": { "message": "Never for this site" },
   "saved": { "message": "Saved in VaultRust" },
-  "updated": { "message": "Password updated in VaultRust" }
+  "updated": { "message": "Password updated in VaultRust" },
+
+  "tabForms": { "message": "Cards & IDs" },
+  "cards": { "message": "Cards" },
+  "identities": { "message": "Identities" },
+  "noCards": { "message": "No cards in VaultRust yet." },
+  "noIdentities": { "message": "No identities in VaultRust yet." },
+  "addCard": { "message": "Add a card in VaultRust" },
+  "addIdentity": { "message": "Add an identity in VaultRust" },
+  "copyNumber": { "message": "Copy card number" },
+  "copyCvv": { "message": "Copy security code" },
+  "cardNumber": { "message": "Card number" },
+  "securityCode": { "message": "Security code" },
+  "formsHint": { "message": "Click one to fill in the payment or address form on this page. Card numbers are only filled into secure (https) pages." },
+  "insecureTitle": { "message": "Not a secure page" },
+  "insecure": { "message": "This page isn't encrypted (no https), so VaultRust won't fill in card details here." },
+  "noFieldsTitle": { "message": "No form found" },
+  "noFields": { "message": "Click into the form's first field and pick the item from the VaultRust menu there." }
 }

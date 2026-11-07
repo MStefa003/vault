@@ -9,6 +9,11 @@ heading.
 
 ## Unreleased
 
+- The browser extension fills in payment and address forms: click into a card number or address field and pick a card or identity from the VaultRust menu, or use the new "Cards & IDs" tab in its popup. Card details are only filled into secure (https) pages.
+- New identities have separate City, State / region, Postal code and Country fields; addresses written on several lines are still understood.
+- VaultRust tells you when a new version is out with a notification you can install from, checks twice a day (and again an hour later if you were offline), and keeps checking while it stays open.
+- After an update, a notification shows what's new. Settings → App → What's new lists the changes in every version.
+
 ## 0.5.0 — 2026-11-07
 
 - The browser extension now works much like Bitwarden's: logins appear in a menu when you click into a login field, it offers to save new logins and update changed passwords after you sign in, and its button shows how many logins the site has. The popup can search the whole vault, copy usernames, passwords and codes (copied by VaultRust, so the clipboard is still cleared), generate passwords following your site rules and lock VaultRust.

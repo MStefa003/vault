@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_name__",
   "description": "__MSG_description__",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "default_locale": "en",
   "minimum_chrome_version": "116",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAstbdYWR0YtaS75YoLG+u+HFU3R5cvCIW8Ly6xZum8HxA1aeAoqFkDcLIkF9ltyDQ61zty9+nFstDJssYN1EAdA3jLSvjBorQUrnwwhnd951pXchp77rZB1Tc2sUvqX2hNvz0t1ToydhqYg8aoNmcVM6ci1ju/p9yZE/3lAwQOvWIcZdtxUrFENt9WR1aZ/BA2evH3koCFrYB+EmvyTgugmCMMhfqTm09DSf/4pbZ/LXYoDQSMoLBNsVufh1yredBuXbX5ot8nWcFNEG7CoiT5y2q/7h04qF0MpH2LrZPYwRx2AiuN3XLZ++F8kdeBAe7Ir2sjssC4yUGThdTuwmbrwIDAQAB",

@@ -1,6 +1,6 @@
-// VaultRust's script in web pages: the icon and menu in login fields,
-// filling in, and noticing when a login form is submitted (to offer saving
-// it). It never sees the vault: logins arrive from the background worker
+// VaultRust's script in web pages: the icon and menu in login, payment and
+// address fields, filling them in, and noticing when a login form is
+// submitted (to offer saving it). It never sees the vault: logins arrive from the background worker
 // only when the user picks one, and the menu and save bar are extension
 // pages in frames the page can't read.
 
@@ -55,14 +55,197 @@
     return inputsIn(scope(el)).filter(isPassword).length >= 2 || /new|confirm|repeat|signup|register/i.test(attrs(el));
   }
 
+  // --- Which fields are card and address fields --------------------------------
+
+  const FORM_TAGS = "input, select, textarea";
+  const fieldsIn = (root) =>
+    [...root.querySelectorAll(FORM_TAGS)].filter(
+      (el) => visible(el) && !(el instanceof HTMLInputElement && !TEXTUAL.has(el.type) && el.type !== "number"),
+    );
+
+  /// The text of the <label> for `el`, if any.
+  function labelText(el) {
+    const label = el.labels?.[0] ?? el.closest?.("label");
+    return label?.textContent?.slice(0, 80) ?? "";
+  }
+
+  // [role, autocomplete tokens, words in the field's name, id, placeholder or label]
+  const CARD_ROLES = [
+    ["number", ["cc-number"], /card.?(num|no\b)|cc.?num|cardnumber|acct.?num|kartennummer|numéro de carte|αριθμός κάρτας/i],
+    ["name", ["cc-name"], /(card|cc).?(holder|name|owner)|name.?on.?card|holder.?name|karteninhaber|titulaire|κάτοχ/i],
+    ["given", ["cc-given-name"], null],
+    ["family", ["cc-family-name"], null],
+    ["month", ["cc-exp-month"], /(exp|expiry|expiration|valid).{0,8}(month|mm\b)|cc.?month|card.?month/i],
+    ["year", ["cc-exp-year"], /(exp|expiry|expiration|valid).{0,8}(year|yy)|cc.?year|card.?year/i],
+    ["expiry", ["cc-exp"], /expir|exp.?date|\bexp\b|valid.?(thru|until)|mm.?\/.?yy|gültig|λήξη/i],
+    ["code", ["cc-csc"], /cvv|cvc|csc|cvn|security.?code|card.?code|card.?verification|sicherheitscode|κωδικός ασφαλείας/i],
+    ["brand", ["cc-type"], /card.?type|cc.?type|card.?brand/i],
+  ];
+
+  const ADDRESS_ROLES = [
+    ["given", ["given-name"], /first.?name|given.?name|\bfname|vorname|prénom|(^|\s)όνομα(\s|$)/i],
+    ["family", ["family-name"], /last.?name|family.?name|surname|\blname|nachname|επώνυμο/i],
+    ["middle", ["additional-name"], /middle.?name/i],
+    ["name", ["name"], /full.?name|your.?name|(^|\s)name(\s|$)|ονοματεπώνυμο/i],
+    ["email", ["email"], /e.?mail/i],
+    ["phone", ["tel", "tel-national"], /phone|mobile|\btel\b|telefon|τηλέφωνο|κινητό/i],
+    ["street", ["street-address"], null],
+    ["line2", ["address-line2", "address-line3"], /address.?(line)?.?[23]|addr.?[23]|apartment|suite|\bapt\b|adresszusatz/i],
+    ["line1", ["address-line1"], /address.?(line)?.?1|addr.?1|street|(^|\s)address(\s|$)|billing.?address|shipping.?address|adresse|straße|strasse|διεύθυνση|οδός/i],
+    ["city", ["address-level2"], /city|town|locality|stadt|\bort\b|ville|πόλη/i],
+    ["region", ["address-level1"], /state|province|region|county|bundesland|νομός|περιφέρεια/i],
+    ["postcode", ["postal-code"], /zip|postal|post.?code|\bplz\b|code.?postal|ταχυδρομικός/i],
+    ["country", ["country", "country-name"], /country|pays|χώρα/i],
+  ];
+
+  /// The token that names the field ("shipping street-address" -> "street-address").
+  const autocompleteToken = (el) => (el.getAttribute("autocomplete") ?? "").trim().toLowerCase().split(/\s+/).at(-1);
+
+  function roleIn(table, el) {
+    const token = autocompleteToken(el);
+    for (const [role, tokens] of table) if (tokens.includes(token)) return role;
+    // A field that says what it is, and it's something else.
+    if (token && token !== "on" && token !== "off") return null;
+    const text = `${el.name} ${el.id} ${el.getAttribute("placeholder") ?? ""} ${el.getAttribute("aria-label") ?? ""} ${labelText(el)}`.trim();
+    for (const [role, , words] of table) {
+      // "E-mail address" is not a street.
+      if (words?.test(text) && !(role === "line1" && /e.?mail|\bip\b/i.test(text))) return role;
+    }
+    return null;
+  }
+
+  const cardRole = (el) => (isPassword(el) || /one-time-code/.test(el.autocomplete) ? null : roleIn(CARD_ROLES, el));
+  const addressRole = (el) => (isPassword(el) ? null : roleIn(ADDRESS_ROLES, el));
+
+  /// "card" when `el` is a payment card field, "identity" when it's part of
+  /// an address or contact form (two or more such fields, at least one of
+  /// them more than a name or an email address), or null.
+  function formKind(el) {
+    if (!(el instanceof HTMLElement) || !el.matches(FORM_TAGS) || !visible(el)) return null;
+    const fields = fieldsIn(scope(el));
+    if (cardRole(el) && fields.some((f) => ["number", "code"].includes(cardRole(f)))) return "card";
+    // Sign-up forms are filled from logins.
+    if (!addressRole(el) || inputsIn(scope(el)).some(isPassword)) return null;
+    const roles = new Set(fields.map(addressRole).filter(Boolean));
+    const postal = ["street", "line1", "city", "postcode", "region", "country", "phone"].some((r) => roles.has(r));
+    return roles.size >= 2 && postal ? "identity" : null;
+  }
+
   // --- Filling ------------------------------------------------------------------
+
+  const PROTOS = [HTMLInputElement, HTMLSelectElement, HTMLTextAreaElement].map((c) => c.prototype);
 
   function set(el, value) {
     el.focus();
     // Through the prototype's setter, so frameworks (React…) notice.
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, value);
+    const proto = PROTOS.find((p) => p.isPrototypeOf(el)) ?? HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, "value").set.call(el, value);
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+  const norm = (s) =>
+    s
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .trim();
+
+  /// Pick the option of a <select> that means one of `wanted` ("08", "8",
+  /// "aug"…). Returns whether one was found.
+  function pick(select, wanted) {
+    const want = wanted.filter(Boolean).map((w) => norm(String(w)));
+    if (!want.length) return false;
+    const options = [...select.options].filter((o) => !o.disabled);
+    const hit =
+      options.find((o) => want.includes(norm(o.value)) || want.includes(norm(o.text))) ??
+      options.find((o) => want.some((w) => w.length >= 3 && norm(o.text).startsWith(w)));
+    if (!hit) return false;
+    set(select, hit.value);
+    return true;
+  }
+
+  /// Put `value` in a field; for a drop-down, the option matching it (or
+  /// one of `alternatives`).
+  function put(el, value, ...alternatives) {
+    if (!value) return false;
+    if (el instanceof HTMLSelectElement) return pick(el, [value, ...alternatives]);
+    set(el, value);
+    return true;
+  }
+
+  /// "MM/YY", "MM/YYYY" or "MMYY", as the field seems to want it.
+  function expiryText(el, month, year) {
+    const hint = `${el.placeholder ?? ""} ${el.getAttribute("aria-label") ?? ""} ${labelText(el)}`.toLowerCase();
+    const max = el.maxLength > 0 ? el.maxLength : 0;
+    if (/yyyy|εεεε|jjjj|aaaa/.test(hint) || max === 7) return `${month}/${year}`;
+    if (max === 4) return `${month}${year.slice(2)}`;
+    return `${month}/${year.slice(2)}`;
+  }
+
+  /// The fields to fill: those around the field the menu was opened from,
+  /// or (from the toolbar popup) around the first field of the right kind.
+  function formFields(kind) {
+    if (lastField && document.contains(lastField) && formKind(lastField) === kind) return fieldsIn(scope(lastField));
+    const first = fieldsIn(document).find((el) => formKind(el) === kind);
+    return first ? fieldsIn(scope(first)) : [];
+  }
+
+  function fillCard(c) {
+    const [given, ...rest] = (c.name ?? "").split(/\s+/);
+    const month = Number(c.month);
+    let filled = 0;
+    for (const el of formFields("card")) {
+      const select = el instanceof HTMLSelectElement;
+      const done = {
+        number: () => put(el, c.number),
+        name: () => put(el, c.name),
+        given: () => put(el, given),
+        family: () => put(el, rest.join(" ")),
+        month: () => put(el, c.month, String(month), MONTHS[month - 1]),
+        year: () => put(el, select || el.maxLength !== 2 ? c.year : c.year.slice(2), c.year.slice(2)),
+        expiry: () => !!c.month && put(el, expiryText(el, c.month, c.year)),
+        code: () => put(el, c.code),
+        brand: () => put(el, c.brand, { amex: "american express", mastercard: "master card", diners: "diners club" }[c.brand]),
+      }[cardRole(el)]?.();
+      if (done) filled++;
+    }
+    return filled;
+  }
+
+  function fillIdentity(id) {
+    const fields = formFields("identity");
+    const roles = new Set(fields.map(addressRole));
+    const street = id.street ?? [];
+    let filled = 0;
+    for (const el of fields) {
+      const value = {
+        name: id.name,
+        // No separate middle-name field: keep it with the first name.
+        given: roles.has("middle") || !id.middle ? id.given : `${id.given} ${id.middle}`,
+        middle: id.middle,
+        family: id.family,
+        email: id.email,
+        phone: id.phone,
+        street: street.join(el instanceof HTMLTextAreaElement ? "\n" : ", "),
+        line1: roles.has("line2") ? street[0] : street.join(", "),
+        line2: street.slice(1).join(", "),
+        city: id.city,
+        region: id.region,
+        postcode: id.postcode,
+        country: id.country,
+      }[addressRole(el)];
+      if (put(el, value)) filled++;
+    }
+    return filled;
+  }
+
+  function fillForm(data) {
+    // The page may have moved on to another site since VaultRust checked it.
+    if (location.hostname.toLowerCase().replace(/^www\./, "") !== data.host) return { filled: 0 };
+    return { filled: data.kind === "card" ? fillCard(data) : fillIdentity(data) };
   }
 
   /// The username field that belongs with `pw`: the last text field before
@@ -195,7 +378,7 @@
     ensureHost();
     closeMenu();
     dismissed = null;
-    send({ type: "openMenu", newPassword: isNewPassword(field) });
+    send({ type: "openMenu", newPassword: isNewPassword(field), form: isLoginField(field) ? null : formKind(field) });
     menuFrame = document.createElement("iframe");
     menuFrame.src = chrome.runtime.getURL("menu.html");
     menuFrame.style.height = "64px";
@@ -223,10 +406,12 @@
     "focusin",
     async (e) => {
       const field = e.target;
-      if (!isLoginField(field)) return;
+      // Drop-downs (country, expiry month) are filled with the rest.
+      const form = isLoginField(field) || field instanceof HTMLSelectElement ? null : formKind(field);
+      if (!form && !isLoginField(field)) return;
       if (field !== lastField) closeMenu();
       lastField = field;
-      const how = await send({ type: "field" });
+      const how = await send({ type: "field", form });
       if (document.activeElement !== field) return;
       if (how?.icon) showIcon(field);
       if (how?.open && !menuFrame && dismissed !== field && !field.value) openMenu(field);
@@ -369,6 +554,9 @@
         break;
       case "fillPassword":
         respond(fillPassword(msg.password));
+        break;
+      case "fillForm":
+        respond(fillForm(msg.data ?? {}));
         break;
       case "closeMenu":
         closeMenu();

@@ -118,6 +118,15 @@ async function fill(tabId, frameId, url, id) {
   return done?.filled ? null : "no_form";
 }
 
+/// Fill card or identity `id` into a frame of a tab (VaultRust only sends
+/// card details to https pages). Returns null or an error code.
+async function fillForm(tabId, frameId, url, id) {
+  const reply = await ask({ type: "fillForm", url, id });
+  if (reply.error) return reply.error;
+  const done = await toFrame(tabId, frameId, { type: "fillForm", data: reply });
+  return done?.filled ? null : "no_fields";
+}
+
 // --- The toolbar badge: how many logins the current site has ---------------
 
 const counts = new Map();
@@ -171,8 +180,26 @@ const menus = new Map();
 async function menuData(tabId) {
   const m = menus.get(tabId);
   if (!m) return { error: "no_reply" };
+  if (m.form) {
+    const reply = await ask({ type: "forms", what: m.form });
+    const insecure = m.form === "card" && !/^https:/i.test(m.url) && !/^http:\/\/(localhost|127\.0\.0\.1)[:/]/i.test(m.url);
+    return { ...reply, host: hostOf(m.url), form: m.form, insecure };
+  }
   const reply = await ask({ type: "logins", url: m.url });
   return { ...reply, host: hostOf(m.url), newPassword: m.newPassword };
+}
+
+/// How many cards or identities the vault has, kept for a minute so
+/// focusing fields doesn't ask every time.
+const formCounts = new Map();
+
+async function formCount(what) {
+  const known = formCounts.get(what);
+  if (known && Date.now() - known.time < 60000) return known.n;
+  const reply = await ask({ type: "forms", what });
+  const n = reply.items?.length ?? 0;
+  formCounts.set(what, { n, time: Date.now() });
+  return n;
 }
 
 // --- Offering to save a login -------------------------------------------------
@@ -264,6 +291,10 @@ async function handle(msg, sender) {
         const tab = await chrome.tabs.get(msg.tabId);
         return { error: await fill(tab.id, 0, tab.url, msg.id) };
       }
+      case "fillFormTab": {
+        const tab = await chrome.tabs.get(msg.tabId);
+        return { error: await fillForm(tab.id, 0, tab.url, msg.id) };
+      }
       case "fillPassword":
         return (await toFrame(msg.tabId, 0, { type: "fillPassword", password: msg.password })) ?? { filled: 0 };
       case "refresh":
@@ -283,6 +314,12 @@ async function handle(msg, sender) {
         if (!m) return { error: "no_reply" };
         toFrame(tabId, m.frameId, { type: "closeMenu" });
         return { error: await fill(tabId, m.frameId, m.url, msg.id) };
+      case "menuFillForm": {
+        if (!m) return { error: "no_reply" };
+        const error = await fillForm(tabId, m.frameId, m.url, msg.id);
+        if (!error) toFrame(tabId, m.frameId, { type: "closeMenu" });
+        return { error };
+      }
       case "menuGenerate": {
         if (!m) return { error: "no_reply" };
         const reply = await ask({ type: "generate", url: m.url });
@@ -295,7 +332,8 @@ async function handle(msg, sender) {
         return ask({ type: "show" });
       case "menuNew":
         if (m) toFrame(tabId, m.frameId, { type: "closeMenu" });
-        return ask({ type: "new", url: m?.url ?? "" });
+        formCounts.clear();
+        return ask({ type: "new", url: m?.url ?? "", what: m?.form ?? "" });
       case "menuSize":
         if (m) toFrame(tabId, m.frameId, { type: "menuSize", height: msg.height });
         return {};
@@ -343,15 +381,26 @@ async function handle(msg, sender) {
   // from the browser (sender.url), not from the page.
   if (sender.id === chrome.runtime.id && tabId !== undefined && isWeb(sender.url)) {
     switch (msg.type) {
-      case "field":
-        // A login field got focus: show the icon (if VaultRust is set up)
-        // and open the menu straight away when the site has logins.
+      case "field": {
+        // A login, card or address field got focus: show the icon (if
+        // VaultRust is set up) and open the menu straight away when there
+        // is something to fill in.
+        const icon = lastState === "unlocked" || lastState === "locked" || lastState === "unknown";
+        if (msg.form === "card" || msg.form === "identity") {
+          return { icon, open: lastState === "unlocked" && (await formCount(msg.form)) > 0 };
+        }
         return {
-          icon: lastState === "unlocked" || lastState === "locked" || lastState === "unknown",
+          icon,
           open: lastState === "unlocked" && (counts.get(tabId) ?? 0) > 0 && hostOf(sender.url) !== "",
         };
+      }
       case "openMenu":
-        menus.set(tabId, { frameId: sender.frameId, url: sender.url, newPassword: !!msg.newPassword });
+        menus.set(tabId, {
+          frameId: sender.frameId,
+          url: sender.url,
+          newPassword: !!msg.newPassword,
+          form: msg.form === "card" || msg.form === "identity" ? msg.form : null,
+        });
         return {};
       case "captured":
         captured(sender.tab, sender.url, msg.username ?? "", msg.password ?? "");

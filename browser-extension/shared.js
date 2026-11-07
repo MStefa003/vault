@@ -34,6 +34,8 @@ const PATHS = {
   fill: '<path d="M5 12h11M12 7l5 5-5 5M20 5v14"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
   check: '<path d="M5 12l5 5 9-10"/>',
+  card: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/>',
+  person: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="11" r="2.5"/><path d="M5.5 17c.6-1.8 2-2.7 3.5-2.7s2.9.9 3.5 2.7M15 10h3M15 14h3"/>',
 };
 
 export function icon(name) {
@@ -54,17 +56,24 @@ export function tile(title) {
   return el("span", { class: "tile", style: `background:${TILES[h % TILES.length]}` }, letter);
 }
 
-/// A login / item row: tile, title, username, then action buttons.
+/// A tile with a line icon instead of a letter (cards, identities).
+export function iconTile(name) {
+  return el("span", { class: "tile icon-tile", html: icon(name) });
+}
+
+/// A login / item row: tile, title, username (or a card's or identity's
+/// summary), then action buttons.
 export function itemRow(item, { onclick, actions = [] } = {}) {
   const who = el(
     "span",
     { class: "who" },
     el("span", { class: "title" }, item.title),
-    el("span", { class: "sub" }, item.username || item.site || t("noUsername")),
+    el("span", { class: "sub" }, item.sub || item.username || item.site || t("noUsername")),
   );
+  const look = item.kind === "card" ? iconTile("card") : item.kind === "identity" ? iconTile("person") : tile(item.title);
   const main = onclick
-    ? el("button", { class: "row-main", onclick, title: t("fillThis") }, tile(item.title), who)
-    : el("div", { class: "row-main" }, tile(item.title), who);
+    ? el("button", { class: "row-main", onclick, title: t("fillThis") }, look, who)
+    : el("div", { class: "row-main" }, look, who);
   return el("div", { class: "row" }, main, el("span", { class: "actions" }, ...actions));
 }
 
@@ -83,6 +92,10 @@ export function explain(error) {
       return [t("lockedTitle"), t("locked")];
     case "busy":
       return [t("busyTitle"), t("busy")];
+    case "insecure":
+      return [t("insecureTitle"), t("insecure")];
+    case "no_fields":
+      return [t("noFieldsTitle"), t("noFields")];
     default:
       return [t("noReplyTitle"), t("noReply")];
   }

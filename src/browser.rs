@@ -30,6 +30,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, Zeroizing};
 
+use crate::autofill;
 use crate::autotype::{site_name, url_host};
 use crate::model::{Entry, EntryKind, Field, FieldKind, VaultData};
 
@@ -72,7 +73,8 @@ pub struct Request {
     /// Search text.
     #[serde(default)]
     pub query: String,
-    /// What to copy: "username", "password" or "code".
+    /// What to copy: "username", "password", "code", or a card's "number"
+    /// or "cvv". For `forms` and `new`: "card" or "identity".
     #[serde(default)]
     pub what: String,
     /// A login the user just used on a page (save / update).
@@ -90,8 +92,8 @@ impl Drop for Request {
 }
 
 /// Requests that need an unlocked vault, answered on the window thread.
-const VAULT_REQUESTS: [&str; 8] = [
-    "logins", "fill", "search", "copy", "generate", "check", "save", "new",
+const VAULT_REQUESTS: [&str; 10] = [
+    "logins", "fill", "search", "copy", "generate", "check", "save", "new", "forms", "fillForm",
 ];
 
 /// Bytes of a JSON reply, wiped when dropped (fill replies hold a password).
@@ -288,7 +290,150 @@ pub fn value_to_copy(e: &Entry, what: &str, now: i64) -> Option<Zeroizing<String
             .map(|u| Zeroizing::new(u.to_string())),
         "password" => e.primary_password().map(|p| Zeroizing::new(p.to_string())),
         "code" => current_code(e, now),
+        "number" => autofill::card(e)
+            .map(|c| c.number)
+            .filter(|n| !n.is_empty()),
+        "cvv" => autofill::card(e)
+            .map(|c| Zeroizing::new(c.code.to_string()))
+            .filter(|c| !c.is_empty()),
         _ => None,
+    }
+}
+
+// --- Cards and addresses.
+
+/// The kind of item a `forms` / `fillForm` request is about.
+fn form_kind(what: &str) -> Option<EntryKind> {
+    match what {
+        "card" => Some(EntryKind::CreditCard),
+        "identity" => Some(EntryKind::Identity),
+        _ => None,
+    }
+}
+
+/// Card details are only filled into pages that arrived encrypted (and
+/// into a developer's own computer).
+fn card_page(page_url: &str) -> bool {
+    let url = page_url.trim().to_ascii_lowercase();
+    let host = url_host(&url);
+    url.starts_with("https://")
+        || (url.starts_with("http://") && matches!(host.as_str(), "localhost" | "127.0.0.1"))
+}
+
+/// The reply to a `forms` request: the vault's cards or identities (`what`
+/// is "card" or "identity"), most recently used first, no secrets.
+pub fn forms_reply(entries: &[Entry], what: &str) -> Reply {
+    #[derive(Serialize)]
+    struct Item<'a> {
+        id: String,
+        title: &'a str,
+        kind: &'a str,
+        sub: String,
+    }
+    let Some(kind) = form_kind(what) else {
+        return error("bad_request");
+    };
+    let mut found: Vec<&Entry> = entries.iter().filter(|e| e.kind == kind).collect();
+    found.sort_by(by_use);
+    let items: Vec<Item> = found
+        .into_iter()
+        .take(MAX_RESULTS)
+        .map(|e| Item {
+            id: e.id.to_string(),
+            title: e.display_title(),
+            kind: what,
+            sub: match kind {
+                EntryKind::CreditCard => autofill::card_summary(e),
+                _ => autofill::identity_summary(e),
+            },
+        })
+        .collect();
+    reply(&serde_json::json!({ "items": items }))
+}
+
+/// The reply to a `fillForm` request: the details of card or identity
+/// `id` for a payment or address form on `page_url`, and the item used.
+/// Card details are only sent to `https` pages; identity numbers (passport,
+/// tax) are never sent.
+pub fn form_fill_reply(entries: &[Entry], page_url: &str, id: &str) -> (Reply, Option<u64>) {
+    #[derive(Serialize)]
+    struct CardFill<'a> {
+        kind: &'a str,
+        host: String,
+        name: &'a str,
+        number: &'a str,
+        month: &'a str,
+        year: &'a str,
+        code: &'a str,
+        brand: &'a str,
+    }
+    #[derive(Serialize)]
+    struct IdentityFill<'a> {
+        kind: &'a str,
+        host: String,
+        name: &'a str,
+        given: &'a str,
+        middle: &'a str,
+        family: &'a str,
+        email: &'a str,
+        phone: &'a str,
+        street: &'a [String],
+        city: &'a str,
+        region: &'a str,
+        postcode: &'a str,
+        country: &'a str,
+    }
+    let host = url_host(page_url);
+    let found = id
+        .parse::<u64>()
+        .ok()
+        .and_then(|id| entries.iter().find(|e| e.id == id))
+        .filter(|_| !host.is_empty());
+    let Some(e) = found else {
+        return (error("not_found"), None);
+    };
+    match e.kind {
+        EntryKind::CreditCard => {
+            if !card_page(page_url) {
+                return (error("insecure"), None);
+            }
+            let Some(c) = autofill::card(e) else {
+                return (error("not_found"), None);
+            };
+            let fill = CardFill {
+                kind: "card",
+                host,
+                name: c.name,
+                number: &c.number,
+                month: &c.month,
+                year: &c.year,
+                code: c.code,
+                brand: c.brand,
+            };
+            (reply(&fill), Some(e.id))
+        }
+        EntryKind::Identity => {
+            let Some(i) = autofill::identity(e) else {
+                return (error("not_found"), None);
+            };
+            let fill = IdentityFill {
+                kind: "identity",
+                host,
+                name: &i.name,
+                given: &i.given,
+                middle: &i.middle,
+                family: &i.family,
+                email: &i.email,
+                phone: &i.phone,
+                street: &i.street,
+                city: &i.city,
+                region: &i.region,
+                postcode: &i.postcode,
+                country: &i.country,
+            };
+            (reply(&fill), Some(e.id))
+        }
+        _ => (error("not_found"), None),
     }
 }
 
@@ -980,6 +1125,96 @@ mod tests {
         let (r, used) = fill_reply(&entries, "https://github.com", "4", 59);
         assert_eq!(json(&r)["code"].as_str().unwrap().len(), 6);
         assert_eq!(used.unwrap().code.unwrap().len(), 6);
+    }
+
+    #[test]
+    fn cards_and_identities_fill_forms() {
+        let set = |e: &mut Entry, label: &str, value: &str| {
+            e.fields
+                .iter_mut()
+                .find(|f| f.label == label)
+                .unwrap()
+                .value = value.into();
+        };
+        let mut card = Entry::new(EntryKind::CreditCard);
+        card.id = 1;
+        card.title = "Everyday card".into();
+        set(&mut card, "Card number", "4242 4242 4242 4242");
+        set(&mut card, "Expiry (MM/YY)", "08/27");
+        set(&mut card, "Security code (CVV)", "123");
+        set(&mut card, "PIN", "9999");
+        let mut person = Entry::new(EntryKind::Identity);
+        person.id = 2;
+        person.title = "Me".into();
+        set(&mut person, "Full name", "Jane Public");
+        set(&mut person, "Address", "Ερμού 12");
+        set(&mut person, "City", "Αθήνα");
+        set(&mut person, "ID / passport number", "AB123456");
+        let entries = vec![card, person, login(3, "https://shop.example", "u", "pw")];
+
+        // Lists carry no secrets.
+        let list = forms_reply(&entries, "card");
+        let text = String::from_utf8(list.to_vec()).unwrap();
+        assert!(text.contains("Visa •••• 4242 · 08/27"), "{text}");
+        assert!(!text.contains("4242424242424242") && !text.contains("123"));
+        let items = json(&list)["items"].as_array().unwrap().len();
+        assert_eq!(items, 1);
+        let ids = json(&forms_reply(&entries, "identity"));
+        assert_eq!(ids["items"][0]["sub"], "Jane Public · Αθήνα");
+        assert_eq!(
+            json(&forms_reply(&entries, "login"))["error"],
+            "bad_request"
+        );
+
+        let (r, used) = form_fill_reply(&entries, "https://shop.example/pay", "1");
+        let r = json(&r);
+        assert_eq!(used, Some(1));
+        assert_eq!(r["number"], "4242424242424242");
+        assert_eq!(
+            (r["month"].as_str(), r["year"].as_str()),
+            (Some("08"), Some("2027"))
+        );
+        assert_eq!(
+            (r["code"].as_str(), r["brand"].as_str()),
+            (Some("123"), Some("visa"))
+        );
+        assert_eq!(r["host"], "shop.example");
+        assert!(r.get("pin").is_none());
+
+        // Never to an unencrypted page.
+        let (r, used) = form_fill_reply(&entries, "http://shop.example/pay", "1");
+        assert_eq!((json(&r)["error"].as_str(), used), (Some("insecure"), None));
+        assert!(form_fill_reply(&entries, "http://localhost:3000/", "1")
+            .1
+            .is_some());
+
+        let (r, _) = form_fill_reply(&entries, "http://shop.example/address", "2");
+        let text = String::from_utf8(r.to_vec()).unwrap();
+        let r = json(&r);
+        assert_eq!(
+            (r["given"].as_str(), r["family"].as_str()),
+            (Some("Jane"), Some("Public"))
+        );
+        assert_eq!(r["street"][0], "Ερμού 12");
+        assert_eq!(r["city"], "Αθήνα");
+        assert!(!text.contains("AB123456"));
+
+        // Logins aren't forms, and the id must exist.
+        assert_eq!(
+            json(&form_fill_reply(&entries, "https://shop.example", "3").0)["error"],
+            "not_found"
+        );
+        assert_eq!(
+            json(&form_fill_reply(&entries, "https://shop.example", "9").0)["error"],
+            "not_found"
+        );
+        let c = value_to_copy(&entries[0], "number", 0).unwrap();
+        assert_eq!(c.as_str(), "4242424242424242");
+        assert_eq!(
+            value_to_copy(&entries[0], "cvv", 0).unwrap().as_str(),
+            "123"
+        );
+        assert!(value_to_copy(&entries[1], "number", 0).is_none());
     }
 
     #[test]

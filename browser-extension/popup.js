@@ -1,5 +1,5 @@
-// The toolbar popup: the current site's logins, a search of the vault and
-// the password generator.
+// The toolbar popup: the current site's logins, a search of the vault,
+// cards and addresses to fill in, and the password generator.
 import { el, explain, icon, iconButton, itemRow, send, t } from "./shared.js";
 
 const main = document.getElementById("main");
@@ -30,6 +30,7 @@ function tabs() {
   const pages = [
     ["site", t("tabSite")],
     ["vault", t("tabVault")],
+    ["forms", t("tabForms")],
     ["generator", t("tabGenerator")],
   ];
   document.getElementById("tabs").replaceChildren(
@@ -140,6 +141,8 @@ function copyButtons(item) {
     item.username ? iconButton("user", t("copyUsername"), copy("username", t("username"))) : null,
     item.password ? iconButton("key", t("copyPassword"), copy("password", t("password"))) : null,
     item.code ? iconButton("clock", t("copyCode"), copy("code", t("code"))) : null,
+    item.kind === "card" ? iconButton("card", t("copyNumber"), copy("number", t("cardNumber"))) : null,
+    item.kind === "card" ? iconButton("key", t("copyCvv"), copy("cvv", t("securityCode"))) : null,
   ];
 }
 
@@ -211,6 +214,52 @@ async function vaultPage() {
   search();
 }
 
+// --- Cards and addresses -----------------------------------------------------------
+
+async function formsPage() {
+  const [cards, identities] = await Promise.all([
+    ask({ type: "forms", what: "card" }),
+    ask({ type: "forms", what: "identity" }),
+  ]);
+  lockButton(!cards.error);
+  if (cards.error) return problem(cards.error);
+  const section = (title, items, empty, addLabel, what) => [
+    el("h2", { class: "section" }, title),
+    items.length
+      ? el(
+          "div",
+          { class: "rows" },
+          ...items.map((item) =>
+            itemRow(item, { onclick: tab ? () => chooseForm(item.id) : undefined, actions: copyButtons(item) }),
+          ),
+        )
+      : el("p", { class: "message faint" }, empty),
+    el(
+      "button",
+      { class: "link", onclick: () => ask({ type: "new", url: tab?.url ?? "", what }), html: `${icon("plus")} ` },
+      addLabel,
+    ),
+  ];
+  show(
+    ...section(t("cards"), cards.items ?? [], t("noCards"), t("addCard"), "card"),
+    ...section(t("identities"), identities.items ?? [], t("noIdentities"), t("addIdentity"), "identity"),
+    el("p", { class: "faint note" }, t("formsHint")),
+  );
+}
+
+async function chooseForm(id) {
+  const r = await send({ type: "fillFormTab", tabId: tab.id, id });
+  if (!r.error) return window.close();
+  if (r.error === "no_fields" || r.error === "insecure") {
+    const [title, text] = explain(r.error);
+    return show(
+      el("p", { class: "message error" }, el("strong", {}, title), text),
+      el("button", { class: "link", onclick: render }, t("tryAgain")),
+    );
+  }
+  problem(r.error);
+}
+
 // --- Generator ------------------------------------------------------------------
 
 async function generatorPage() {
@@ -260,6 +309,7 @@ function render() {
   tabs();
   if (page === "site") return sitePage();
   if (page === "vault") return vaultPage();
+  if (page === "forms") return formsPage();
   return generatorPage();
 }
 

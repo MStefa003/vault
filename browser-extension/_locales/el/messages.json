@@ -73,5 +73,22 @@
   "notNow": { "message": "Όχι τώρα" },
   "never": { "message": "Ποτέ για αυτόν τον ιστότοπο" },
   "saved": { "message": "Αποθηκεύτηκε στο VaultRust" },
-  "updated": { "message": "Ο κωδικός ενημερώθηκε στο VaultRust" }
+  "updated": { "message": "Ο κωδικός ενημερώθηκε στο VaultRust" },
+
+  "tabForms": { "message": "Κάρτες" },
+  "cards": { "message": "Κάρτες" },
+  "identities": { "message": "Ταυτότητες" },
+  "noCards": { "message": "Δεν υπάρχουν ακόμα κάρτες στο VaultRust." },
+  "noIdentities": { "message": "Δεν υπάρχουν ακόμα ταυτότητες στο VaultRust." },
+  "addCard": { "message": "Προσθήκη κάρτας στο VaultRust" },
+  "addIdentity": { "message": "Προσθήκη ταυτότητας στο VaultRust" },
+  "copyNumber": { "message": "Αντιγραφή αριθμού κάρτας" },
+  "copyCvv": { "message": "Αντιγραφή κωδικού ασφαλείας" },
+  "cardNumber": { "message": "Αριθμός κάρτας" },
+  "securityCode": { "message": "Κωδικός ασφαλείας" },
+  "formsHint": { "message": "Κάντε κλικ σε ένα για να συμπληρωθεί η φόρμα πληρωμής ή διεύθυνσης αυτής της σελίδας. Οι αριθμοί καρτών συμπληρώνονται μόνο σε ασφαλείς (https) σελίδες." },
+  "insecureTitle": { "message": "Η σελίδα δεν είναι ασφαλής" },
+  "insecure": { "message": "Αυτή η σελίδα δεν είναι κρυπτογραφημένη (χωρίς https), οπότε το VaultRust δεν θα συμπληρώσει εδώ στοιχεία κάρτας." },
+  "noFieldsTitle": { "message": "Δεν βρέθηκε φόρμα" },
+  "noFields": { "message": "Κάντε κλικ στο πρώτο πεδίο της φόρμας και επιλέξτε το στοιχείο από το μενού του VaultRust εκεί." }
 }

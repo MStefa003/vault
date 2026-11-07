@@ -211,6 +211,16 @@ pub fn answer(ms: &mut MainState, svc: &mut Services, req: &Request) -> Reply {
             }
             answer
         }
+        "forms" => browser::forms_reply(&ms.vault.data().entries, &req.what),
+        "fillForm" => {
+            let (answer, used) =
+                browser::form_fill_reply(&ms.vault.data().entries, &req.url, &req.id);
+            if let Some(id) = used {
+                ms.vault.data_mut().mark_used(id, now);
+                ms.schedule_settings_save();
+            }
+            answer
+        }
         "copy" => {
             let found = req
                 .id
@@ -224,6 +234,8 @@ pub fn answer(ms: &mut MainState, svc: &mut Services, req: &Request) -> Reply {
             let what = match req.what.as_str() {
                 "username" => tr("Username"),
                 "password" => tr("Password"),
+                "number" => tr("Card number"),
+                "cvv" => tr("Security code (CVV)"),
                 _ => tr("One-time code"),
             };
             ms.copy_from(svc, id, &value, what);
@@ -282,8 +294,16 @@ pub fn answer(ms: &mut MainState, svc: &mut Services, req: &Request) -> Reply {
                 svc.toasts.info(tr("Finish editing the open item first"));
                 return error("busy");
             }
-            ms.page = Page::Items(Category::Logins);
-            ms.items.new_entry(EntryKind::Login);
+            let (category, kind) = match req.what.as_str() {
+                "card" => (Category::Cards, EntryKind::CreditCard),
+                "identity" => (Category::Identities, EntryKind::Identity),
+                _ => (Category::Logins, EntryKind::Login),
+            };
+            ms.page = Page::Items(category);
+            ms.items.new_entry(kind);
+            if kind != EntryKind::Login {
+                return ok();
+            }
             if let Some(ed) = ms.items.editor.as_mut() {
                 if let Some(f) = ed
                     .entry

@@ -131,6 +131,10 @@ impl EntryKind {
                 ("Email", Email),
                 ("Phone", Text),
                 ("Address", Note),
+                ("City", Text),
+                ("State / region", Text),
+                ("Postal code", Text),
+                ("Country", Text),
                 ("Date of birth", Text),
                 ("ID / passport number", Secret),
                 ("Tax / social security number", Secret),
@@ -367,9 +371,9 @@ impl Entry {
         }
     }
 
-    /// The end of the month in a card's "Expiry (MM/YY)" field, if it parses
-    /// (MM/YY, MM/YYYY, MM-YY).
-    pub fn card_expiry(&self) -> Option<i64> {
+    /// The month (1–12) and four-digit year in a card's "Expiry (MM/YY)"
+    /// field, if it parses (MM/YY, MM/YYYY, MM-YY).
+    pub fn card_expiry_month(&self) -> Option<(u32, i64)> {
         if self.kind != EntryKind::CreditCard {
             return None;
         }
@@ -385,9 +389,13 @@ impl Entry {
         if year < 100 {
             year += 2000;
         }
-        if !(2000..=2200).contains(&year) {
-            return None;
-        }
+        (2000..=2200).contains(&year).then_some((month, year))
+    }
+
+    /// The end of the month in a card's "Expiry (MM/YY)" field, if it parses
+    /// (MM/YY, MM/YYYY, MM-YY).
+    pub fn card_expiry(&self) -> Option<i64> {
+        let (month, year) = self.card_expiry_month()?;
         // First day of the following month, minus one second.
         let (ny, nm) = if month == 12 {
             (year + 1, 1)

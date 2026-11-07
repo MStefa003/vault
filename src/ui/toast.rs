@@ -34,6 +34,8 @@ struct Toast {
 pub struct Toasts {
     items: Vec<Toast>,
     clicked: Option<ToastAction>,
+    /// Space kept free below the toasts (for the update notification).
+    pub lift: f32,
 }
 
 impl Toasts {
@@ -118,7 +120,7 @@ impl Toasts {
         let mut clicked = None;
         egui::Area::new(Id::new("vaultrust_toasts"))
             .order(Order::Tooltip)
-            .anchor(Align2::RIGHT_BOTTOM, [-16.0, -16.0])
+            .anchor(Align2::RIGHT_BOTTOM, [-16.0, -16.0 - self.lift])
             .interactable(interactive)
             .show(ctx, |ui| {
                 for t in &self.items {

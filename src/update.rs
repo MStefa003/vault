@@ -235,6 +235,74 @@ pub fn install(exe: &Path, new_bytes: &[u8]) -> Result<(), UpdateError> {
     Ok(())
 }
 
+// --- What's new.
+
+/// The changelog built into this program (CHANGELOG.md).
+pub const CHANGELOG: &str = include_str!("../CHANGELOG.md");
+
+/// One version's section of the changelog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Changes {
+    pub version: String,
+    /// As written after the version ("2026-11-07"), or empty.
+    pub date: String,
+    pub items: Vec<String>,
+}
+
+/// Markdown emphasis and code marks taken out ("**Bold** `x`" -> "Bold x").
+fn plain(s: &str) -> String {
+    s.replace("**", "").replace('`', "")
+}
+
+/// The points of a version's notes: one per "- " or "* " line (with the
+/// lines that continue it), or per paragraph.
+pub fn note_items(notes: &str) -> Vec<String> {
+    let mut items: Vec<String> = Vec::new();
+    let mut open = false;
+    for line in notes.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            open = false;
+        } else if let Some(b) = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")) {
+            items.push(plain(b.trim()));
+            open = true;
+        } else if open && !t.starts_with('#') {
+            if let Some(last) = items.last_mut() {
+                last.push(' ');
+                last.push_str(&plain(t));
+            }
+        } else if !t.starts_with('#') {
+            items.push(plain(t));
+            open = true;
+        }
+    }
+    items
+}
+
+/// The versions in a changelog written like CHANGELOG.md ("## 1.2.0 —
+/// date" headings), newest first. Text before the first version and an
+/// empty "Unreleased" section are left out.
+pub fn parse_changelog(text: &str) -> Vec<Changes> {
+    let mut out = Vec::new();
+    for section in text.split("\n## ").skip(1) {
+        let (head, body) = section.split_once('\n').unwrap_or((section, ""));
+        let (version, date) = match head.split_once(['—', '–']) {
+            Some((v, d)) => (v.trim(), d.trim()),
+            None => (head.trim(), ""),
+        };
+        let items = note_items(body);
+        if items.is_empty() {
+            continue;
+        }
+        out.push(Changes {
+            version: version.to_string(),
+            date: date.to_string(),
+            items,
+        });
+    }
+    out
+}
+
 /// Remove what an earlier update left next to the program.
 pub fn clean_up(exe: &Path) {
     let _ = std::fs::remove_file(sibling(exe, "old"));
@@ -251,6 +319,33 @@ mod tests {
 
     fn sign(kp: &ed25519_compact::KeyPair, v: Version, exe: &[u8]) -> Vec<u8> {
         hex_encode(kp.sk.sign(signed_message(v, exe), None).as_ref()).into_bytes()
+    }
+
+    #[test]
+    fn changelogs_and_notes_are_read() {
+        let log = "# Changelog\n\nIntro text.\n\n## Unreleased\n\n\
+                   ## 1.1.0 — 2026-12-01\n\n- **New**: cards\n  and addresses\n- `Fix`\n\n\
+                   ## 1.0.0\n\nFirst release.\n";
+        let c = parse_changelog(log);
+        assert_eq!(c.len(), 2);
+        assert_eq!(
+            (c[0].version.as_str(), c[0].date.as_str()),
+            ("1.1.0", "2026-12-01")
+        );
+        assert_eq!(c[0].items, vec!["New: cards and addresses", "Fix"]);
+        assert_eq!((c[1].version.as_str(), c[1].items.len()), ("1.0.0", 1));
+        assert_eq!(
+            note_items("* one\n* two\n\nthree"),
+            vec!["one", "two", "three"]
+        );
+
+        // The built-in changelog has this version's notes.
+        let built_in = parse_changelog(CHANGELOG);
+        assert!(!built_in.is_empty());
+        assert!(built_in
+            .iter()
+            .filter_map(|c| Version::parse(&c.version))
+            .all(|v| v <= current_version()));
     }
 
     #[test]

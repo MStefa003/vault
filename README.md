@@ -51,10 +51,12 @@ code-signed yet: choose **More info → Run anyway**.
   the usernames and emails you use most are one click away
 * **Welcome tour**: six short cards the first time you open a vault (replay it
   from Settings)
-* **Automatic updates**: when a new version is published on
-  [GitHub](https://github.com/MStefa003/vault/releases), VaultRust offers to
+* **Automatic updates**: VaultRust checks
+  [GitHub](https://github.com/MStefa003/vault/releases) twice a day and shows
+  a notification when a new version is out, with what's new and a button to
   install it. Releases are signed, and an update is only installed if its
-  signature checks out. Turn the daily check off in Settings
+  signature checks out. Turn the check off in Settings. After an update it
+  shows what changed; Settings → App → What's new lists every version
 * **Attachments**: keep recovery codes, key files or document scans inside an
   item, encrypted with the rest of the vault (up to 10 MB per file, 50 MB per
   vault)
@@ -67,7 +69,8 @@ code-signed yet: choose **More info → Run anyway**.
   e.g. `{USERNAME}{ENTER}{DELAY 1500}{PASSWORD}{ENTER}` for two-page logins
 * **Browser extension** for Chrome, Edge and Brave, working with the app:
   logins appear in a menu when you click into a login field; it offers to
-  save new logins and update changed passwords after you sign in; the
+  save new logins and update changed passwords after you sign in; payment
+  and address forms are filled from your cards and identities; the
   toolbar button lists the site's logins, searches the vault and generates
   passwords (following your site rules). Add it from Settings → Browser
   extension. See [Browser extension](#browser-extension) below
@@ -219,9 +222,14 @@ the store page instead. Every release also has the extension as a zip
 * **Saving**: after you sign in with a login VaultRust doesn't have, a bar
   asks whether to save it (or, for a known account with a new password,
   whether to update it). "Never for this site" stops asking there.
+* **In payment and address forms**: the icon appears in card number,
+  expiry, security code, name and address fields; pick a card or identity
+  from the menu to fill in the whole form (drop-downs for the expiry month,
+  year and country too). Card details are only filled into `https` pages.
 * **The toolbar button** shows how many logins the site has. Its popup has
-  three tabs: *This site* (fill, or copy username / password / code),
-  *Vault* (search everything) and *Generator*. It can also lock VaultRust.
+  four tabs: *This site* (fill, or copy username / password / code),
+  *Vault* (search everything), *Cards & IDs* (fill a form, or copy a card's
+  number or security code) and *Generator*. It can also lock VaultRust.
 * **Alt+Shift+L** fills in the most recently used login for the site.
 * After a login with a two-step code is filled in, VaultRust copies the
   current code, ready for the next page.
@@ -255,6 +263,7 @@ src/
   breach.rs         offline lookup in a sorted Have I Been Pwned SHA-1 list
   totp.rs           RFC 6238 one-time codes, otpauth:// parsing
   autotype.rs       window matching and keystroke sequences for auto-type
+  autofill.rs       card and address details for web forms
   browser.rs        browser extension: messages, site matching, pairing,
                     the helper the browser starts, browser registration
   hello.rs          Windows Hello quick unlock (TPM-backed key credential)

@@ -57,6 +57,9 @@ pub struct AppPrefs {
     pub check_updates: bool,
     /// When that was last done (unix seconds).
     pub last_update_check: i64,
+    /// The newest version that has run here, to say what's new once after
+    /// an update (empty before the first start).
+    pub seen_version: String,
     /// The welcome tour was finished or skipped.
     pub tour_seen: bool,
     /// Interface language (`None` = the Windows display language, if
@@ -88,6 +91,7 @@ impl Default for AppPrefs {
             close_to_tray: false,
             check_updates: true,
             last_update_check: 0,
+            seen_version: String::new(),
             tour_seen: false,
             language: None,
             browser_enabled: false,
@@ -140,6 +144,7 @@ impl AppPrefs {
                 ("keep_in_tray", v) => prefs.close_to_tray = v == "true",
                 ("check_updates", v) => prefs.check_updates = v != "false",
                 ("last_update_check", v) => prefs.last_update_check = v.parse().unwrap_or(0),
+                ("seen_version", v) => prefs.seen_version = v.to_string(),
                 ("tour_seen", v) => prefs.tour_seen = v == "true",
                 ("language", v) => prefs.language = Language::from_key(v),
                 ("browser", v) => prefs.browser_enabled = v == "on",
@@ -166,11 +171,12 @@ impl AppPrefs {
 
     fn serialize(&self) -> String {
         let mut s = format!(
-            "theme={}\nkeep_in_tray={}\ncheck_updates={}\nlast_update_check={}\ntour_seen={}\nlanguage={}\nbrowser={}\n",
+            "theme={}\nkeep_in_tray={}\ncheck_updates={}\nlast_update_check={}\nseen_version={}\ntour_seen={}\nlanguage={}\nbrowser={}\n",
             self.theme.key(),
             self.close_to_tray,
             self.check_updates,
             self.last_update_check,
+            self.seen_version.lines().next().unwrap_or(""),
             self.tour_seen,
             self.language.map_or("system", Language::key),
             if self.browser_enabled { "on" } else { "off" },
@@ -227,6 +233,7 @@ mod tests {
             close_to_tray: false,
             check_updates: false,
             last_update_check: 1_700_000_000,
+            seen_version: "0.5.0".into(),
             tour_seen: true,
             language: Some(Language::Greek),
             browser_enabled: true,

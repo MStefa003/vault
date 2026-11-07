@@ -3,7 +3,7 @@
 #
 # Sets the version in Cargo.toml, commits, tags v<version> and pushes. The
 # Release workflow on GitHub then builds, signs and publishes it, and
-# installed copies offer the update within a day (or at "Check now").
+# installed copies offer the update within 12 hours (or at "Check now").
 
 param([Parameter(Mandatory = $true)][string]$Version)
 
