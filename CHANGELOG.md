@@ -9,6 +9,8 @@ heading.
 
 ## Unreleased
 
+## 0.5.0 — 2026-11-07
+
 - The browser extension now works much like Bitwarden's: logins appear in a menu when you click into a login field, it offers to save new logins and update changed passwords after you sign in, and its button shows how many logins the site has. The popup can search the whole vault, copy usernames, passwords and codes (copied by VaultRust, so the clipboard is still cleared), generate passwords following your site rules and lock VaultRust.
 - Sign-up forms get a generated password from the menu in the password field.
 - Settings → Browser extension has "Add to Chrome / Edge / Brave" buttons that open the browser and walk you through adding the extension.
