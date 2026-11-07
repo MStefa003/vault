@@ -9,6 +9,8 @@ heading.
 
 ## Unreleased
 
+## 0.6.0 — 2026-11-07
+
 - The browser extension fills in payment and address forms: click into a card number or address field and pick a card or identity from the VaultRust menu, or use the new "Cards & IDs" tab in its popup. Card details are only filled into secure (https) pages.
 - New identities have separate City, State / region, Postal code and Country fields; addresses written on several lines are still understood.
 - VaultRust tells you when a new version is out with a notification you can install from, checks twice a day (and again an hour later if you were offline), and keeps checking while it stays open.
