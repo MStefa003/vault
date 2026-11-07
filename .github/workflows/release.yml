@@ -53,6 +53,8 @@ jobs:
           choco install innosetup -y --no-progress | Out-Null
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Qp "/DAppVersion=${{ steps.version.outputs.version }}" installer\vaultrust.iss
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+          # The browser extension, ready to submit to the browsers' stores.
+          Compress-Archive -Path browser-extension\* -DestinationPath release\VaultRust-Browser-Extension-${{ steps.version.outputs.version }}.zip
           Get-FileHash release\* -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content release\SHA256SUMS.txt
 
       # The version's section of CHANGELOG.md, which the app also shows
@@ -76,4 +78,5 @@ jobs:
             release/VaultRust-Setup-${{ steps.version.outputs.version }}.exe
             release/VaultRust.exe
             release/VaultRust.exe.sig
+            release/VaultRust-Browser-Extension-${{ steps.version.outputs.version }}.zip
             release/SHA256SUMS.txt

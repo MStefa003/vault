@@ -384,8 +384,10 @@ characters, so they arrive correctly on any keyboard layout.
 ## Browser extension
 
 Off until turned on in Settings → Browser extension. The extension
-(`browser-extension/`) never stores vault data; it keeps only a random
-32-byte token that identifies the browser.
+(`browser-extension/`) never stores vault data; it keeps a random 32-byte
+token that identifies the browser, the hosts the user chose "never" for, and
+(in memory only, for at most three minutes) a login the user just signed in
+with until they choose whether to save it.
 
 * **Who can ask.** The browser starts `VaultRust.exe` as a native messaging
   host. Its registration (`HKCU\Software\…\NativeMessagingHosts`) allows
@@ -401,18 +403,29 @@ Off until turned on in Settings → Browser extension. The extension
   app preferences, not the vault). Any other token is answered "unpaired".
   An unpacked extension's ID can be reused by another unpacked extension the
   user loads, which is why approval exists.
-* **What it gets.** Only while a vault is unlocked: the titles and usernames
-  of logins whose website matches the tab's host or a parent domain of it
-  ("example.com" covers "login.example.com", never the other way round), and
-  the username, password and current one-time code of one of those. The app
-  checks the match again for every fill, never sends an `https` login to an
-  `http` page, and the extension fills only if the page is still on the host
-  VaultRust approved. There is no search or access to other items.
+* **What a page can get.** Filling uses the frame's address as reported by
+  the browser (never by the page): only logins whose website matches its
+  host or a parent domain of it ("example.com" covers "login.example.com",
+  never the other way round). The app checks the match again for every
+  fill, never sends an `https` login to an `http` page, and the script in
+  the page fills only if it is still on that host. The list of logins is
+  shown in an extension frame, which the page's scripts can't read. A page's
+  own scripts can read a password once it is filled in, as with any
+  password manager that fills forms.
+* **What the extension itself can get.** An approved browser's extension
+  can, while the vault is unlocked, search all items (titles, usernames,
+  websites and whether they have a password or code; no secrets), ask the
+  app to copy an item's username, password or code (the app copies it with
+  the same clipboard protection as its own Copy buttons; the secret never
+  goes to the browser), save a login for the site of the current tab or
+  update the password of a login of that site (the old one goes to the
+  item's history), open the app's editor for a new login, get a generated
+  password, and lock the vault. It can't read notes, other fields,
+  attachments or history, delete items or change settings.
 * **What it can't protect against.** Anything running as the same Windows
   user can do what the helper does (and much more: read the browser's memory
-  or the screen), as with auto-type. A page's own scripts can read a filled
-  password, as with any password manager that fills forms; filling happens
-  only on request (button or shortcut), never on page load.
+  or the screen), as with auto-type. A compromised browser profile can use
+  everything listed above.
 * Replies holding a password are wiped from the app's and the helper's
   buffers after sending (best effort, like the rest of memory handling).
 

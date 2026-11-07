@@ -65,12 +65,12 @@ code-signed yet: choose **More info → Run anyway**.
   VaultRust types username, Tab, password, Enter. Shift+Enter types only the
   password, Ctrl+Enter the one-time code. Items can have their own sequence,
   e.g. `{USERNAME}{ENTER}{DELAY 1500}{PASSWORD}{ENTER}` for two-page logins
-* **Browser extension** for Chrome, Edge and Brave: click the VaultRust
-  button in the toolbar (or press Alt+Shift+L) to fill in the login for the
-  site you're on. Turn it on in Settings → Browser extension, which also
-  shows how to add the extension. Each browser is approved once in the app,
-  and it only ever gets the logins for the site in the tab, while the vault
-  is unlocked. See [Browser extension](#browser-extension) below
+* **Browser extension** for Chrome, Edge and Brave, working with the app:
+  logins appear in a menu when you click into a login field; it offers to
+  save new logins and update changed passwords after you sign in; the
+  toolbar button lists the site's logins, searches the vault and generates
+  passwords (following your site rules). Add it from Settings → Browser
+  extension. See [Browser extension](#browser-extension) below
 * **Windows Hello**: unlock with fingerprint, face or PIN (the master
   password is still needed once after VaultRust starts)
 * **Expiry reminders**: give items an expiry date (API keys, work passwords);
@@ -188,28 +188,53 @@ cargo test --lib render_screenshots -- --ignored
 
 ## Browser extension
 
-The extension isn't in the browsers' stores yet; it comes with VaultRust:
+### Adding it to a browser
+
+The extension isn't in the browsers' stores; VaultRust adds it:
 
 1. In VaultRust, open **Settings → Browser extension** and turn on **Fill in
-   logins in your browser**. This writes the extension to
-   `%LOCALAPPDATA%\VaultRust\Browser extension` and registers VaultRust with
-   Chrome, Edge and Brave so the extension can reach it.
-2. In the browser, open `chrome://extensions` (`edge://extensions`,
-   `brave://extensions`), turn on **Developer mode**, choose **Load
-   unpacked** and pick that folder.
-3. Click the VaultRust button in the toolbar, then **Connect to VaultRust**.
-   VaultRust asks whether to allow the browser and shows a six-digit code;
-   allow it if the extension shows the same code.
+   and save logins in your browser**.
+2. Click **Add to Chrome** (or Edge, Brave). VaultRust opens the browser on
+   a page with the steps, shows the extension's folder selected in File
+   Explorer and puts `chrome://extensions` (`edge://`, `brave://`) on the
+   clipboard.
+3. Paste that into the address bar, turn on **Developer mode** and drag the
+   folder onto the page (or click **Load unpacked** and choose it).
+4. Pin VaultRust from the puzzle-piece menu, click its button and choose
+   **Connect to VaultRust**. VaultRust asks whether to allow the browser and
+   shows a six-digit code; allow it if the extension shows the same code.
 
-From then on the button lists the logins for the site in the current tab
-(most recently used first); click one to fill in the username and password.
-Alt+Shift+L fills in the most recently used one directly. On a page that asks
-only for a two-step code, the current one-time code is filled in instead.
+Browsers don't let programs install extensions from outside their stores by
+themselves (only company-managed PCs can), so the last steps are the user's.
+Once published in the Chrome Web Store or Edge Add-ons, the buttons can open
+the store page instead. Every release also has the extension as a zip
+(for submitting it to a store later).
 
-How it works: the browser starts `VaultRust.exe` as its helper, which passes
-each request over a named pipe (open only to your Windows account) to the
-running app. The app answers only browsers you approved, only while a vault
-is unlocked, and only with logins whose website matches the tab's site
+### Using it
+
+* **In login fields**: a VaultRust icon appears in username and password
+  fields; when the site has logins, the menu opens by itself. Pick one to
+  fill it in. On sign-up and change-password forms the menu offers a
+  generated password (following the site's password rules).
+* **Saving**: after you sign in with a login VaultRust doesn't have, a bar
+  asks whether to save it (or, for a known account with a new password,
+  whether to update it). "Never for this site" stops asking there.
+* **The toolbar button** shows how many logins the site has. Its popup has
+  three tabs: *This site* (fill, or copy username / password / code),
+  *Vault* (search everything) and *Generator*. It can also lock VaultRust.
+* **Alt+Shift+L** fills in the most recently used login for the site.
+* After a login with a two-step code is filled in, VaultRust copies the
+  current code, ready for the next page.
+
+Copying from the extension is done by VaultRust itself: the clipboard is
+cleared after the vault's timeout and kept out of clipboard history.
+
+### How it works
+
+The browser starts `VaultRust.exe` as its helper, which passes each request
+over a named pipe (open only to your Windows account) to the running app.
+The app answers only browsers you approved and only while a vault is
+unlocked. A page can only have logins filled in whose website matches it
 (subdomains included; never an `https` login on an `http` page). See
 [docs/SECURITY.md](docs/SECURITY.md#browser-extension). Firefox isn't
 supported yet.

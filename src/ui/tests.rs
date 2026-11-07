@@ -1025,6 +1025,16 @@ fn render_screenshots() {
         });
     main_state(&mut tall).page = Page::Settings;
     shoot(&mut tall, "30-browser-settings");
+    tall.state_mut().browser.show_steps_for(0);
+    shoot(&mut tall, "30b-browser-adding");
+    std::fs::write(
+        out.join("30c-setup-page.html"),
+        super::browser_link::setup_page(
+            &crate::browser::BROWSERS[1],
+            Path::new(r"C:\Users\you\AppData\Local\VaultRust\Browser extension"),
+        ),
+    )
+    .unwrap();
     let prefs = tall.state().prefs.clone();
     let mut h2 = harness(unlocked_app(&dir.path().join("Pair.vault")));
     h2.state_mut()
@@ -1239,17 +1249,19 @@ fn browser_extension_works_only_after_approval_and_only_for_the_site() {
     h.state_mut().browser.apply(&prefs).unwrap();
     let link = h.state().browser.link();
 
-    let req = |kind: &str| Request {
-        kind: kind.into(),
-        token: "ab".repeat(32),
-        url: "https://login.example.com/signin".into(),
-        id: id.to_string(),
-        browser: "Microsoft Edge".into(),
+    let req = |kind: &str| {
+        let mut r = Request::default();
+        r.kind = kind.into();
+        r.token = "ab".repeat(32);
+        r.url = "https://login.example.com/signin".into();
+        r.id = id.to_string();
+        r.browser = "Microsoft Edge".into();
+        r
     };
     // Answered on the window thread: run frames until the reply is in.
     let ask = |h: &mut Harness<'_, VaultRustApp>, r: Request| {
         let link = link.clone();
-        let t = std::thread::spawn(move || link.answer(&r));
+        let t = std::thread::spawn(move || link.answer(r));
         while !t.is_finished() {
             h.step();
         }
@@ -1289,15 +1301,74 @@ fn browser_extension_works_only_after_approval_and_only_for_the_site() {
     assert_eq!(fill["host"], "login.example.com");
     assert!(main_state(&mut h).vault.data().entry(id).unwrap().last_used > 0);
 
-    // Another site can't get it, and nothing is answered once locked.
-    let other = Request {
-        url: "https://example.org".into(),
-        ..req("fill")
-    };
+    // Another site can't get it.
+    let mut other = req("fill");
+    other.url = "https://example.org".into();
     assert_eq!(ask(&mut h, other)["error"], "not_found");
-    h.get_by_label_contains("Lock vault").click();
+
+    // The popup searches the whole vault (no secrets) and has VaultRust
+    // copy a password.
+    let mut search = req("search");
+    search.query = "sample".into();
+    let found = ask(&mut h, search);
+    assert!(found["items"].as_array().unwrap().len() >= 5, "{found}");
+    assert!(!found.to_string().contains("Password value"));
+    let mut copy = req("copy");
+    copy.what = "password".into();
+    assert_eq!(ask(&mut h, copy)["ok"], true);
+    let generated = ask(&mut h, req("generate"));
+    assert!(generated["password"].as_str().unwrap().len() >= 8);
+
+    // Signing in with a new password offers an update, and saving it keeps
+    // the old one in the history.
+    let mut check = req("check");
+    check.username = "ann".into();
+    check.password = "n3w-pw".into();
+    let offer = ask(&mut h, check);
+    assert_eq!(
+        (offer["state"].as_str(), offer["id"].as_str()),
+        (Some("update"), Some(&*id.to_string()))
+    );
+    let mut save = req("save");
+    save.username = "ann".into();
+    save.password = "n3w-pw".into();
+    assert_eq!(ask(&mut h, save)["ok"], true);
+    let e = main_state(&mut h).vault.data().entry(id).unwrap().clone();
+    assert_eq!(e.primary_password(), Some("n3w-pw"));
+    assert_eq!(e.history.last().unwrap().value, "s3cret-pw");
+    // A new account is saved as a new login named after the site.
+    let mut save = req("save");
+    save.id = String::new();
+    save.username = "bob".into();
+    save.password = "b0b-pw".into();
+    let saved = ask(&mut h, save);
+    let new_id: u64 = saved["id"].as_str().unwrap().parse().unwrap();
+    let e = main_state(&mut h)
+        .vault
+        .data()
+        .entry(new_id)
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (e.title.as_str(), e.first_of(FieldKind::Username)),
+        ("Example", Some("bob"))
+    );
+    // Both were written to disk.
+    let path = dir.path().join("ui.vault");
+    let reopened = UnlockedVault::open(&path, &SecretString::from(PW)).unwrap();
+    assert!(reopened.data().entry(new_id).is_some());
+
+    // "Add a login" opens the editor with the site filled in.
+    assert_eq!(ask(&mut h, req("new"))["ok"], true);
+    let ed = main_state(&mut h).items.editor.as_ref().unwrap();
+    assert_eq!(ed.entry.fields[0].value, "https://login.example.com");
+    main_state(&mut h).items.editor = None;
+
+    // The popup's lock button locks; nothing is answered once locked.
+    assert_eq!(ask(&mut h, req("lock"))["ok"], true);
     h.step();
     h.step();
     assert!(is_locked(&h));
     assert_eq!(ask(&mut h, req("fill"))["error"], "locked");
+    assert_eq!(ask(&mut h, req("status"))["state"], "locked");
 }

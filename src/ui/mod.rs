@@ -500,8 +500,8 @@ impl VaultRustApp {
         }
     }
 
-    /// Requests from the browser extension: logins for a page are answered
-    /// from the unlocked vault; connecting a browser asks the user first.
+    /// Requests from the browser extension, answered from the unlocked
+    /// vault; connecting a browser asks the user first.
     fn handle_browser(&mut self, ctx: &egui::Context) {
         use crate::browser::{self, Job};
         for job in self.browser.take_jobs() {
@@ -516,25 +516,27 @@ impl VaultRustApp {
                         u.focus();
                     }
                 }
-                Job::Logins { url, reply } => {
-                    let answer = match &self.screen {
-                        Screen::Main(m) => browser::logins_reply(&m.vault.data().entries, &url),
-                        _ => browser::error("locked"),
-                    };
-                    let _ = reply.send(answer);
+                Job::Lock => {
+                    if matches!(self.screen, Screen::Main(_)) {
+                        self.apply(ctx, Transition::Lock);
+                    }
                 }
-                Job::Fill { url, id, reply } => {
+                Job::Vault { req, reply } => {
+                    if req.kind == "new" {
+                        Self::bring_forward(ctx);
+                    }
+                    let mut svc = Services {
+                        clipboard: &mut self.clipboard,
+                        toasts: &mut self.toasts,
+                        recent: &mut self.recent,
+                        prefs: &mut self.prefs,
+                        hotkeys: self.hotkey_status,
+                        tray: self.tray.is_some(),
+                        updates: &mut self.updates,
+                        browser: &mut self.browser,
+                    };
                     let answer = match &mut self.screen {
-                        Screen::Main(m) => {
-                            let now = crate::timeutil::now_unix();
-                            let (answer, used) =
-                                browser::fill_reply(&m.vault.data().entries, &url, &id, now);
-                            if let Some(id) = used {
-                                m.vault.data_mut().mark_used(id, now);
-                                m.schedule_settings_save();
-                            }
-                            answer
-                        }
+                        Screen::Main(m) => browser_link::answer(m, &mut svc, &req),
                         _ => browser::error("locked"),
                     };
                     let _ = reply.send(answer);

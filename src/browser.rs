@@ -1,5 +1,6 @@
-//! The browser extension (`browser-extension/`): it fills in the login for
-//! the site in the current tab.
+//! The browser extension (`browser-extension/`): it fills in logins, offers
+//! to save new ones, generates passwords and searches the vault, all through
+//! the running app.
 //!
 //! The browser starts `VaultRust.exe` as a *native messaging host*
 //! (`run_host`) and talks to it over stdin/stdout. That helper only relays
@@ -9,12 +10,14 @@
 //! * only while browser filling is turned on in its settings;
 //! * only to browsers the user approved once in the app (each sends a random
 //!   token; the app keeps its SHA-256 in the preferences);
-//! * only while a vault is unlocked;
-//! * with the logins whose website matches the tab's site (subdomains
-//!   included; never an `https` login for an `http` page).
+//! * only while a vault is unlocked.
 //!
-//! The extension can't ask for anything else (no search, no other items),
-//! and it keeps nothing but its token.
+//! What a page can get filled in is limited to the logins whose website
+//! matches it (subdomains included; never an `https` login for an `http`
+//! page). The popup can also search the whole vault, but only titles,
+//! usernames and websites are sent; a password or code chosen there is
+//! copied by the app (cleared after the vault's clipboard timeout, kept out
+//! of clipboard history), never handed to the browser.
 
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
@@ -25,22 +28,30 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
-use crate::autotype::url_host;
-use crate::model::{Entry, FieldKind};
+use crate::autotype::{site_name, url_host};
+use crate::model::{Entry, EntryKind, Field, FieldKind, VaultData};
 
 /// The native messaging host's name, as the extension knows it.
 pub const HOST_NAME: &str = "com.vaultrust.browser";
 
-/// The extension's ID, fixed by the public key in its manifest.
+/// The extension's ID, fixed by the public key in its manifest. If the
+/// extension is ever published in a store under another ID, add it to
+/// [`ALLOWED_EXTENSIONS`].
 pub const EXTENSION_ID: &str = "kbbgmknjmnadcnmfllepkafdammfomco";
+
+/// Extensions allowed to start the helper.
+pub const ALLOWED_EXTENSIONS: &[&str] = &[EXTENSION_ID];
 
 /// Requests and replies are small; anything bigger is refused.
 const MAX_MESSAGE: usize = 64 * 1024;
 
 /// How long the helper waits for the app's window thread to answer.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Most items a search returns.
+const MAX_RESULTS: usize = 50;
 
 /// One message from the extension.
 #[derive(Debug, Default, Deserialize)]
@@ -49,19 +60,49 @@ pub struct Request {
     pub kind: String,
     #[serde(default)]
     pub token: String,
+    /// The page the request is about (the extension takes it from the
+    /// browser, not from the page).
     #[serde(default)]
     pub url: String,
+    /// An item's id.
     #[serde(default)]
     pub id: String,
     #[serde(default)]
     pub browser: String,
+    /// Search text.
+    #[serde(default)]
+    pub query: String,
+    /// What to copy: "username", "password" or "code".
+    #[serde(default)]
+    pub what: String,
+    /// A login the user just used on a page (save / update).
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub password: String,
 }
+
+impl Drop for Request {
+    fn drop(&mut self) {
+        self.password.zeroize();
+        self.username.zeroize();
+    }
+}
+
+/// Requests that need an unlocked vault, answered on the window thread.
+const VAULT_REQUESTS: [&str; 8] = [
+    "logins", "fill", "search", "copy", "generate", "check", "save", "new",
+];
 
 /// Bytes of a JSON reply, wiped when dropped (fill replies hold a password).
 pub type Reply = Zeroizing<Vec<u8>>;
 
-fn reply(value: &impl Serialize) -> Reply {
+pub fn reply(value: &impl Serialize) -> Reply {
     Zeroizing::new(serde_json::to_vec(value).unwrap_or_default())
+}
+
+pub fn ok() -> Reply {
+    reply(&serde_json::json!({ "ok": true }))
 }
 
 pub fn error(code: &str) -> Reply {
@@ -121,48 +162,99 @@ fn username(e: &Entry) -> &str {
         .unwrap_or("")
 }
 
+/// The item has a website matching `page_url`.
+fn for_site(e: &Entry, page_url: &str) -> bool {
+    e.fields
+        .iter()
+        .any(|f| f.kind == FieldKind::Url && url_matches(&f.value, page_url))
+}
+
 fn fillable(e: &Entry, page_url: &str) -> bool {
-    (e.primary_password().is_some() || !username(e).is_empty())
-        && e.fields
-            .iter()
-            .any(|f| f.kind == FieldKind::Url && url_matches(&f.value, page_url))
+    (e.primary_password().is_some() || !username(e).is_empty()) && for_site(e, page_url)
+}
+
+fn by_use(a: &&Entry, b: &&Entry) -> std::cmp::Ordering {
+    b.last_used.cmp(&a.last_used).then_with(|| {
+        a.display_title()
+            .to_lowercase()
+            .cmp(&b.display_title().to_lowercase())
+    })
 }
 
 /// The logins for `page_url`, most recently used first.
 pub fn logins_for<'a>(entries: &'a [Entry], page_url: &str) -> Vec<&'a Entry> {
     let mut v: Vec<&Entry> = entries.iter().filter(|e| fillable(e, page_url)).collect();
-    v.sort_by(|a, b| {
-        b.last_used.cmp(&a.last_used).then_with(|| {
-            a.display_title()
-                .to_lowercase()
-                .cmp(&b.display_title().to_lowercase())
-        })
-    });
+    v.sort_by(by_use);
     v
 }
 
-/// The reply to a `logins` request: titles and usernames, no secrets.
-pub fn logins_reply(entries: &[Entry], page_url: &str) -> Reply {
-    #[derive(Serialize)]
-    struct Login<'a> {
-        id: String,
-        title: &'a str,
-        username: &'a str,
+/// What the extension shows of an item: no secrets, only whether it has
+/// them.
+#[derive(Serialize)]
+struct Summary<'a> {
+    id: String,
+    title: &'a str,
+    username: &'a str,
+    site: String,
+    kind: &'a str,
+    password: bool,
+    code: bool,
+}
+
+fn summary(e: &Entry) -> Summary<'_> {
+    Summary {
+        id: e.id.to_string(),
+        title: e.display_title(),
+        username: username(e),
+        site: e.first_of(FieldKind::Url).map(url_host).unwrap_or_default(),
+        kind: e.kind.label(),
+        password: e.primary_password().is_some(),
+        code: e.totp_secret().is_some(),
     }
-    let logins: Vec<Login> = logins_for(entries, page_url)
+}
+
+/// The reply to a `logins` request: the page's logins, no secrets.
+pub fn logins_reply(entries: &[Entry], page_url: &str) -> Reply {
+    let logins: Vec<Summary> = logins_for(entries, page_url)
         .into_iter()
-        .map(|e| Login {
-            id: e.id.to_string(),
-            title: e.display_title(),
-            username: username(e),
-        })
+        .map(summary)
         .collect();
     reply(&serde_json::json!({ "host": url_host(page_url), "logins": logins }))
 }
 
-/// The reply to a `fill` request, and the id of the item used. The item
-/// must still match the page.
-pub fn fill_reply(entries: &[Entry], page_url: &str, id: &str, now: i64) -> (Reply, Option<u64>) {
+/// The reply to a `search` request: the best matches for `query` across
+/// the vault (the most recently used items for an empty query), no secrets.
+pub fn search_reply(entries: &[Entry], query: &str) -> Reply {
+    let q = query.trim().to_lowercase();
+    let mut found: Vec<(i32, &Entry)> = entries
+        .iter()
+        .filter_map(|e| e.search_score(&q).map(|s| (s, e)))
+        .collect();
+    found.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| by_use(&a.1, &b.1)));
+    let items: Vec<Summary> = found
+        .into_iter()
+        .take(MAX_RESULTS)
+        .map(|(_, e)| summary(e))
+        .collect();
+    reply(&serde_json::json!({ "items": items }))
+}
+
+fn current_code(e: &Entry, now: i64) -> Option<Zeroizing<String>> {
+    e.totp_secret()
+        .and_then(|s| crate::totp::Totp::parse(s).ok())
+        .map(|t| Zeroizing::new(t.code_at(now)))
+}
+
+/// The item a `fill` used, and its current one-time code (copied by the
+/// app after filling, as the next page often asks for it).
+pub struct Used {
+    pub id: u64,
+    pub code: Option<Zeroizing<String>>,
+}
+
+/// The reply to a `fill` request and the item used. The item must still
+/// match the page.
+pub fn fill_reply(entries: &[Entry], page_url: &str, id: &str, now: i64) -> (Reply, Option<Used>) {
     #[derive(Serialize)]
     struct Fill<'a> {
         host: String,
@@ -178,19 +270,148 @@ pub fn fill_reply(entries: &[Entry], page_url: &str, id: &str, now: i64) -> (Rep
     let Some(e) = found else {
         return (error("not_found"), None);
     };
-    let code = Zeroizing::new(
-        e.totp_secret()
-            .and_then(|s| crate::totp::Totp::parse(s).ok())
-            .map(|t| t.code_at(now))
-            .unwrap_or_default(),
-    );
+    let code = current_code(e, now);
     let fill = Fill {
         host: url_host(page_url),
         username: username(e),
         password: e.primary_password().unwrap_or(""),
-        code: &code,
+        code: code.as_deref().map_or("", |c| c.as_str()),
     };
-    (reply(&fill), Some(e.id))
+    (reply(&fill), Some(Used { id: e.id, code }))
+}
+
+/// The value of one of an item's fields for the `copy` request.
+pub fn value_to_copy(e: &Entry, what: &str, now: i64) -> Option<Zeroizing<String>> {
+    match what {
+        "username" => Some(username(e))
+            .filter(|u| !u.is_empty())
+            .map(|u| Zeroizing::new(u.to_string())),
+        "password" => e.primary_password().map(|p| Zeroizing::new(p.to_string())),
+        "code" => current_code(e, now),
+        _ => None,
+    }
+}
+
+/// What to offer after the user signed in on a page with `username` and
+/// `password`: "same" (nothing to do), "update" (the login exists with
+/// another password) or "new".
+pub fn check_reply(entries: &[Entry], page_url: &str, user: &str, password: &str) -> Reply {
+    if password.is_empty() || url_host(page_url).is_empty() {
+        return reply(&serde_json::json!({ "state": "same" }));
+    }
+    let site: Vec<&Entry> = entries.iter().filter(|e| for_site(e, page_url)).collect();
+    let same_user = |e: &&&Entry| user.is_empty() || username(e).eq_ignore_ascii_case(user.trim());
+    if site
+        .iter()
+        .filter(same_user)
+        .any(|e| e.passwords().any(|p| p == password))
+    {
+        return reply(&serde_json::json!({ "state": "same" }));
+    }
+    let candidates: Vec<&&Entry> = site
+        .iter()
+        .filter(|e| {
+            if user.is_empty() {
+                true
+            } else {
+                username(e).eq_ignore_ascii_case(user.trim())
+            }
+        })
+        .collect();
+    match candidates.as_slice() {
+        [e] => reply(&serde_json::json!({
+            "state": "update",
+            "id": e.id.to_string(),
+            "title": e.display_title(),
+        })),
+        [] => reply(&serde_json::json!({ "state": "new", "site": url_host(page_url) })),
+        // Several accounts and no username to tell them apart.
+        _ => reply(&serde_json::json!({ "state": "same" })),
+    }
+}
+
+/// "https://login.example.com/a?b" -> "https://login.example.com".
+pub fn origin(url: &str) -> String {
+    let url = url.trim();
+    match url.split_once("://") {
+        Some((scheme, rest)) => {
+            let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+            format!("{}://{}", scheme.to_ascii_lowercase(), host)
+        }
+        None => url.split(['/', '?', '#']).next().unwrap_or(url).to_string(),
+    }
+}
+
+/// "accounts.google.com" -> "Google".
+pub fn site_title(url: &str) -> String {
+    let host = url_host(url);
+    let mut c = site_name(&host).chars();
+    match c.next() {
+        Some(first) => first.to_uppercase().chain(c).collect(),
+        None => host,
+    }
+}
+
+/// What a `save` did.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Saved {
+    Created(u64),
+    Updated(u64),
+}
+
+/// Save a login the user just used on `page_url`: update the password of
+/// item `id` (which must belong to the site), or add a new login.
+pub fn save_login(
+    data: &mut VaultData,
+    page_url: &str,
+    user: &str,
+    password: &str,
+    id: &str,
+) -> Result<Saved, &'static str> {
+    if password.is_empty() || password.len() > 4096 || user.len() > 1024 {
+        return Err("bad_request");
+    }
+    if url_host(page_url).is_empty() {
+        return Err("bad_request");
+    }
+    if !id.is_empty() {
+        let mut e = id
+            .parse::<u64>()
+            .ok()
+            .and_then(|id| data.entry(id))
+            .filter(|e| for_site(e, page_url))
+            .cloned()
+            .ok_or("not_found")?;
+        match e.fields.iter_mut().find(|f| f.kind == FieldKind::Password) {
+            Some(f) => f.value = password.to_string(),
+            None => e.fields.push(Field::with_value(
+                crate::i18n::tr("Password"),
+                FieldKind::Password,
+                password,
+            )),
+        }
+        if username(&e).is_empty() && !user.trim().is_empty() {
+            if let Some(f) = e.fields.iter_mut().find(|f| f.kind == FieldKind::Username) {
+                f.value = user.trim().to_string();
+            }
+        }
+        let id = e.id;
+        data.upsert(e);
+        return Ok(Saved::Updated(id));
+    }
+    let mut e = Entry::new(EntryKind::Login);
+    e.title = site_title(page_url);
+    for f in &mut e.fields {
+        match f.kind {
+            FieldKind::Url => f.value = origin(page_url),
+            FieldKind::Username => f.value = user.trim().to_string(),
+            FieldKind::Password => f.value = password.to_string(),
+            _ => {}
+        }
+    }
+    let id = e.id;
+    data.upsert(e);
+    Ok(Saved::Created(id))
 }
 
 // --- Pairing.
@@ -224,21 +445,13 @@ fn valid_token(token: &str) -> bool {
 /// Work for the app's window thread.
 pub enum Job {
     /// A browser asks to be approved.
-    Pair {
-        browser: String,
-        hash: String,
-    },
+    Pair { browser: String, hash: String },
     /// Bring the window forward (to unlock it).
     Show,
-    Logins {
-        url: String,
-        reply: Sender<Reply>,
-    },
-    Fill {
-        url: String,
-        id: String,
-        reply: Sender<Reply>,
-    },
+    /// Lock the vault.
+    Lock,
+    /// One of [`VAULT_REQUESTS`], answered from the unlocked vault.
+    Vault { req: Request, reply: Sender<Reply> },
 }
 
 /// State shared between the pipe threads and the app.
@@ -285,17 +498,8 @@ impl Link {
         sent
     }
 
-    fn ask(&self, make: impl FnOnce(Sender<Reply>) -> Job) -> Reply {
-        let (tx, rx) = mpsc::channel();
-        if !self.send(make(tx), false) {
-            return error("no_reply");
-        }
-        rx.recv_timeout(ANSWER_TIMEOUT)
-            .unwrap_or_else(|_| error("no_reply"))
-    }
-
     /// Answer one request from the extension.
-    pub fn answer(&self, req: &Request) -> Reply {
+    pub fn answer(&self, req: Request) -> Reply {
         if !self.enabled.load(Ordering::Relaxed) {
             return error("disabled");
         }
@@ -310,7 +514,7 @@ impl Link {
             .unwrap_or(false);
         if req.kind == "pair" {
             if paired {
-                return reply(&serde_json::json!({ "ok": true }));
+                return ok();
             }
             let browser: String = req.browser.chars().take(40).collect();
             self.send(Job::Pair { browser, hash }, true);
@@ -319,21 +523,34 @@ impl Link {
         if !paired {
             return error("unpaired");
         }
-        if req.kind == "show" {
-            self.send(Job::Show, true);
-            return reply(&serde_json::json!({ "ok": true }));
-        }
-        if !self.unlocked.load(Ordering::Relaxed) {
-            return error("locked");
-        }
-        let url = req.url.chars().take(4096).collect::<String>();
+        let unlocked = self.unlocked.load(Ordering::Relaxed);
         match req.kind.as_str() {
-            "logins" => self.ask(|reply| Job::Logins { url, reply }),
-            "fill" => self.ask(|reply| Job::Fill {
-                url,
-                id: req.id.clone(),
-                reply,
-            }),
+            "status" => reply(&serde_json::json!({
+                "state": if unlocked { "unlocked" } else { "locked" },
+            })),
+            "show" => {
+                self.send(Job::Show, true);
+                ok()
+            }
+            "lock" => {
+                if unlocked {
+                    self.send(Job::Lock, false);
+                }
+                ok()
+            }
+            kind if VAULT_REQUESTS.contains(&kind) => {
+                if !unlocked {
+                    return error("locked");
+                }
+                // "new" opens the app's editor.
+                let show = kind == "new";
+                let (tx, rx) = mpsc::channel();
+                if !self.send(Job::Vault { req, reply: tx }, show) {
+                    return error("no_reply");
+                }
+                rx.recv_timeout(ANSWER_TIMEOUT)
+                    .unwrap_or_else(|_| error("no_reply"))
+            }
             _ => error("bad_request"),
         }
     }
@@ -342,7 +559,7 @@ impl Link {
     pub fn serve_client(&self, mut conn: impl Read + Write) {
         while let Ok(Some(msg)) = read_frame(&mut conn) {
             let answer = match serde_json::from_slice::<Request>(&msg) {
-                Ok(req) => self.answer(&req),
+                Ok(req) => self.answer(req),
                 Err(_) => error("bad_request"),
             };
             if write_frame(&mut conn, &answer).is_err() {
@@ -391,11 +608,11 @@ pub fn run_host() {
 
 fn relay(name: &str, msg: &[u8], pipe: &mut Option<std::fs::File>) -> Reply {
     let kind = serde_json::from_slice::<Request>(msg)
-        .map(|r| r.kind)
+        .map(|r| r.kind.clone())
         .unwrap_or_default();
     if kind == "launch" {
         return if launch_app() {
-            reply(&serde_json::json!({ "ok": true }))
+            ok()
         } else {
             error("not_running")
         };
@@ -424,7 +641,11 @@ fn launch_app() -> bool {
     let Ok(exe) = std::env::current_exe() else {
         return false;
     };
-    let mut cmd = std::process::Command::new(exe);
+    detached(std::process::Command::new(exe))
+}
+
+/// Start a program that outlives the browser that started the helper.
+fn detached(mut cmd: std::process::Command) -> bool {
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
@@ -451,64 +672,136 @@ fn launch_app() -> bool {
 
 // --- Setting up the browsers.
 
-/// Where each Chromium browser looks for native messaging hosts (under
-/// HKEY_CURRENT_USER).
-const BROWSER_KEYS: [&str; 4] = [
-    r"Software\Google\Chrome\NativeMessagingHosts",
-    r"Software\Microsoft\Edge\NativeMessagingHosts",
-    r"Software\BraveSoftware\Brave-Browser\NativeMessagingHosts",
-    r"Software\Chromium\NativeMessagingHosts",
+/// A browser the extension works in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Browser {
+    /// As shown, and as the extension reports itself when pairing.
+    pub name: &'static str,
+    exe: &'static str,
+    /// Its extensions page.
+    pub extensions_page: &'static str,
+    /// Where it looks for native messaging hosts (under HKEY_CURRENT_USER).
+    registry: &'static str,
+    /// Install folders under Program Files / Local AppData.
+    folder: &'static str,
+}
+
+pub const BROWSERS: [Browser; 3] = [
+    Browser {
+        name: "Chrome",
+        exe: "chrome.exe",
+        extensions_page: "chrome://extensions",
+        registry: r"Software\Google\Chrome\NativeMessagingHosts",
+        folder: r"Google\Chrome\Application",
+    },
+    Browser {
+        name: "Edge",
+        exe: "msedge.exe",
+        extensions_page: "edge://extensions",
+        registry: r"Software\Microsoft\Edge\NativeMessagingHosts",
+        folder: r"Microsoft\Edge\Application",
+    },
+    Browser {
+        name: "Brave",
+        exe: "brave.exe",
+        extensions_page: "brave://extensions",
+        registry: r"Software\BraveSoftware\Brave-Browser\NativeMessagingHosts",
+        folder: r"BraveSoftware\Brave-Browser\Application",
+    },
 ];
+
+/// Chromium builds read their own key.
+const CHROMIUM_KEY: &str = r"Software\Chromium\NativeMessagingHosts";
+
+impl Browser {
+    /// The browser's program, if it is installed.
+    pub fn program(&self) -> Option<PathBuf> {
+        if let Some(p) = crate::os_protect::app_path(self.exe).filter(|p| p.is_file()) {
+            return Some(p);
+        }
+        ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"]
+            .iter()
+            .filter_map(std::env::var_os)
+            .map(|base| PathBuf::from(base).join(self.folder).join(self.exe))
+            .find(|p| p.is_file())
+    }
+
+    /// Whether `name` (what a paired extension called its browser, e.g.
+    /// "Microsoft Edge") is this browser.
+    pub fn is(&self, name: &str) -> bool {
+        name.to_ascii_lowercase()
+            .contains(&self.name.to_ascii_lowercase())
+    }
+
+    /// Open a local page in the browser. (Browsers ignore their own
+    /// `chrome://` pages when another program asks, so the extensions page
+    /// can't be opened directly.)
+    pub fn open(&self, page: &std::path::Path) -> bool {
+        match self.program() {
+            Some(exe) => {
+                let mut cmd = std::process::Command::new(exe);
+                cmd.arg(page);
+                detached(cmd)
+            }
+            None => false,
+        }
+    }
+}
+
+/// Where the page with the steps for adding the extension is written.
+pub fn setup_page_path() -> Option<PathBuf> {
+    Some(data_dir()?.join("Add VaultRust to your browser.html"))
+}
+
+/// Text made safe to put in HTML.
+pub fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// Show the extension's folder selected in File Explorer, ready to be
+/// dragged onto a browser's extensions page.
+pub fn show_extension_folder() -> bool {
+    let Some(dir) = extension_dir() else {
+        return false;
+    };
+    let mut cmd = std::process::Command::new("explorer.exe");
+    cmd.arg(format!("/select,{}", dir.display()));
+    cmd.spawn().is_ok()
+}
+
+macro_rules! extension_files {
+    ($($path:literal),* $(,)?) => {
+        &[$(($path, include_bytes!(concat!("../browser-extension/", $path)))),*]
+    };
+}
 
 /// The extension, built into the program so it can be set up anywhere and
 /// stays in step with updates.
-const EXTENSION_FILES: &[(&str, &[u8])] = &[
-    (
-        "manifest.json",
-        include_bytes!("../browser-extension/manifest.json"),
-    ),
-    (
-        "background.js",
-        include_bytes!("../browser-extension/background.js"),
-    ),
-    (
-        "vaultrust.js",
-        include_bytes!("../browser-extension/vaultrust.js"),
-    ),
-    (
-        "popup.html",
-        include_bytes!("../browser-extension/popup.html"),
-    ),
-    (
-        "popup.css",
-        include_bytes!("../browser-extension/popup.css"),
-    ),
-    ("popup.js", include_bytes!("../browser-extension/popup.js")),
-    (
-        "_locales/en/messages.json",
-        include_bytes!("../browser-extension/_locales/en/messages.json"),
-    ),
-    (
-        "_locales/el/messages.json",
-        include_bytes!("../browser-extension/_locales/el/messages.json"),
-    ),
-    (
-        "icons/icon-16.png",
-        include_bytes!("../browser-extension/icons/icon-16.png"),
-    ),
-    (
-        "icons/icon-32.png",
-        include_bytes!("../browser-extension/icons/icon-32.png"),
-    ),
-    (
-        "icons/icon-48.png",
-        include_bytes!("../browser-extension/icons/icon-48.png"),
-    ),
-    (
-        "icons/icon-128.png",
-        include_bytes!("../browser-extension/icons/icon-128.png"),
-    ),
+const EXTENSION_FILES: &[(&str, &[u8])] = extension_files![
+    "manifest.json",
+    "background.js",
+    "content.js",
+    "shared.js",
+    "ui.css",
+    "popup.html",
+    "popup.js",
+    "menu.html",
+    "menu.js",
+    "bar.html",
+    "bar.js",
+    "_locales/en/messages.json",
+    "_locales/el/messages.json",
+    "icons/icon-16.png",
+    "icons/icon-32.png",
+    "icons/icon-48.png",
+    "icons/icon-128.png",
 ];
+
+/// Files of older versions of the extension, removed when it is updated.
+const OLD_EXTENSION_FILES: &[&str] = &["vaultrust.js", "popup.css"];
 
 /// `%LOCALAPPDATA%\VaultRust`.
 fn data_dir() -> Option<PathBuf> {
@@ -528,14 +821,26 @@ fn host_manifest_path() -> Option<PathBuf> {
 
 /// The host manifest pointing the browsers at `exe`.
 pub fn host_manifest(exe: &std::path::Path) -> String {
+    let origins: Vec<String> = ALLOWED_EXTENSIONS
+        .iter()
+        .map(|id| format!("chrome-extension://{id}/"))
+        .collect();
     serde_json::to_string_pretty(&serde_json::json!({
         "name": HOST_NAME,
         "description": "VaultRust",
         "path": exe,
         "type": "stdio",
-        "allowed_origins": [format!("chrome-extension://{EXTENSION_ID}/")],
+        "allowed_origins": origins,
     }))
     .unwrap_or_default()
+}
+
+fn registry_keys() -> impl Iterator<Item = String> {
+    BROWSERS
+        .iter()
+        .map(|b| b.registry)
+        .chain([CHROMIUM_KEY])
+        .map(|k| format!(r"{k}\{HOST_NAME}"))
 }
 
 /// Write the extension's files and register this program as its helper
@@ -543,8 +848,8 @@ pub fn host_manifest(exe: &std::path::Path) -> String {
 /// moved or updated program stays registered). Returns the extension folder.
 pub fn install() -> Result<PathBuf, String> {
     let failed = |e: io::Error| crate::trf!("Couldn't set up the browser extension: {e}", e);
-    let dir =
-        extension_dir().ok_or_else(|| crate::i18n::tr("No folder for app data").to_string())?;
+    let no_dir = || crate::i18n::tr("No folder for app data").to_string();
+    let dir = extension_dir().ok_or_else(no_dir)?;
     for (name, data) in EXTENSION_FILES {
         let path = dir.join(name);
         if std::fs::read(&path).is_ok_and(|old| old == *data) {
@@ -555,16 +860,15 @@ pub fn install() -> Result<PathBuf, String> {
         }
         std::fs::write(&path, data).map_err(failed)?;
     }
+    for old in OLD_EXTENSION_FILES {
+        let _ = std::fs::remove_file(dir.join(old));
+    }
     let exe = std::env::current_exe().map_err(failed)?;
-    let manifest = host_manifest_path()
-        .ok_or_else(|| crate::i18n::tr("No folder for app data").to_string())?;
+    let manifest = host_manifest_path().ok_or_else(no_dir)?;
     std::fs::write(&manifest, host_manifest(&exe)).map_err(failed)?;
     let manifest = manifest.to_string_lossy();
-    for key in BROWSER_KEYS {
-        crate::os_protect::set_user_registry_default(
-            &format!(r"{key}\{HOST_NAME}"),
-            Some(&manifest),
-        )?;
+    for key in registry_keys() {
+        crate::os_protect::set_user_registry_default(&key, Some(&manifest))?;
     }
     Ok(dir)
 }
@@ -573,8 +877,8 @@ pub fn install() -> Result<PathBuf, String> {
 /// set up). The extension's folder is left for the browser to keep using
 /// until the user removes it there.
 pub fn uninstall() -> Result<(), String> {
-    for key in BROWSER_KEYS {
-        crate::os_protect::set_user_registry_default(&format!(r"{key}\{HOST_NAME}"), None)?;
+    for key in registry_keys() {
+        crate::os_protect::set_user_registry_default(&key, None)?;
     }
     if let Some(m) = host_manifest_path() {
         let _ = std::fs::remove_file(m);
@@ -585,7 +889,6 @@ pub fn uninstall() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::EntryKind;
 
     fn login(id: u64, url: &str, user: &str, pw: &str) -> Entry {
         let mut e = Entry::new(EntryKind::Login);
@@ -595,6 +898,10 @@ mod tests {
         e.fields[1].value = user.into();
         e.fields[3].value = pw.into();
         e
+    }
+
+    fn json(r: &[u8]) -> serde_json::Value {
+        serde_json::from_slice(r).unwrap()
     }
 
     #[test]
@@ -637,7 +944,7 @@ mod tests {
         let b = login(2, "https://github.com", "bob", "pw-b");
         let other = login(3, "https://gitlab.com", "cat", "pw-c");
         let mut otp = login(4, "https://github.com", "dan", "pw-d");
-        otp.fields.push(crate::model::Field::with_value(
+        otp.fields.push(Field::with_value(
             "One-time code",
             FieldKind::Totp,
             "JBSWY3DPEHPK3PXP",
@@ -645,8 +952,7 @@ mod tests {
         otp.last_used = 9;
         let entries = vec![a, b, other, otp];
 
-        let list: serde_json::Value =
-            serde_json::from_slice(&logins_reply(&entries, "https://github.com/login")).unwrap();
+        let list = json(&logins_reply(&entries, "https://github.com/login"));
         assert_eq!(list["host"], "github.com");
         let ids: Vec<&str> = list["logins"]
             .as_array()
@@ -655,30 +961,119 @@ mod tests {
             .map(|l| l["id"].as_str().unwrap())
             .collect();
         assert_eq!(ids, ["4", "1", "2"], "most recently used first");
+        assert_eq!(list["logins"][0]["code"], true);
         assert!(
             !String::from_utf8_lossy(&logins_reply(&entries, "https://github.com")).contains("pw-")
         );
 
         let (r, used) = fill_reply(&entries, "https://github.com/login", "1", 0);
-        let r: serde_json::Value = serde_json::from_slice(&r).unwrap();
+        let r = json(&r);
         assert_eq!(
             (r["username"].as_str(), r["password"].as_str()),
             (Some("ann"), Some("pw-a"))
         );
-        assert_eq!(used, Some(1));
+        assert_eq!(used.map(|u| u.id), Some(1));
         // An item of another site can't be asked for by id.
         let (r, used) = fill_reply(&entries, "https://github.com/login", "3", 0);
         assert_eq!(&*r, &*error("not_found"));
-        assert_eq!(used, None);
-        let (r, _) = fill_reply(&entries, "https://github.com", "4", 59);
-        let r: serde_json::Value = serde_json::from_slice(&r).unwrap();
-        assert_eq!(r["code"].as_str().unwrap().len(), 6);
+        assert!(used.is_none());
+        let (r, used) = fill_reply(&entries, "https://github.com", "4", 59);
+        assert_eq!(json(&r)["code"].as_str().unwrap().len(), 6);
+        assert_eq!(used.unwrap().code.unwrap().len(), 6);
+    }
+
+    #[test]
+    fn search_finds_any_item_without_secrets() {
+        let entries = vec![
+            login(1, "https://github.com", "ann", "pw-a"),
+            login(2, "https://bank.example", "bob", "pw-b"),
+        ];
+        let r = json(&search_reply(&entries, "bank"));
+        assert_eq!(r["items"].as_array().unwrap().len(), 1);
+        assert_eq!(r["items"][0]["site"], "bank.example");
+        assert_eq!(r["items"][0]["password"], true);
+        let all = search_reply(&entries, "");
+        assert_eq!(json(&all)["items"].as_array().unwrap().len(), 2);
+        assert!(!String::from_utf8_lossy(&all).contains("pw-"));
+        let e = &entries[0];
+        assert_eq!(
+            value_to_copy(e, "password", 0)
+                .as_deref()
+                .map(|s| s.as_str()),
+            Some("pw-a")
+        );
+        assert_eq!(
+            value_to_copy(e, "username", 0)
+                .as_deref()
+                .map(|s| s.as_str()),
+            Some("ann")
+        );
+        assert!(value_to_copy(e, "code", 0).is_none());
+        assert!(value_to_copy(e, "notes", 0).is_none());
+    }
+
+    #[test]
+    fn signing_in_offers_to_save_or_update_only_when_needed() {
+        let entries = vec![
+            login(1, "https://example.com", "ann", "old"),
+            login(2, "https://other.net", "ann", "x"),
+        ];
+        let state = |user: &str, pw: &str| {
+            json(&check_reply(
+                &entries,
+                "https://example.com/login",
+                user,
+                pw,
+            ))["state"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(state("ann", "old"), "same");
+        assert_eq!(state("ANN", "new"), "update");
+        assert_eq!(state("", "new"), "update", "the only login of the site");
+        assert_eq!(state("bob", "pw"), "new");
+        assert_eq!(state("ann", ""), "same", "nothing to save");
+
+        let mut data = VaultData::new("t");
+        for e in entries {
+            data.upsert(e);
+        }
+        let url = "https://login.example.com/signin?next=/";
+        let Saved::Created(id) = save_login(&mut data, url, "bob", "pw1", "").unwrap() else {
+            panic!("expected a new login");
+        };
+        let e = data.entry(id).unwrap();
+        assert_eq!(e.title, "Example");
+        assert_eq!(
+            e.first_of(FieldKind::Url),
+            Some("https://login.example.com")
+        );
+        assert_eq!(e.first_of(FieldKind::Username), Some("bob"));
+        assert_eq!(e.primary_password(), Some("pw1"));
+
+        assert_eq!(
+            save_login(&mut data, url, "ann", "new", "1"),
+            Ok(Saved::Updated(1))
+        );
+        let e = data.entry(1).unwrap();
+        assert_eq!(e.primary_password(), Some("new"));
+        assert_eq!(e.history[0].value, "old");
+        // An item of another site can't be changed from this page.
+        assert_eq!(
+            save_login(&mut data, url, "ann", "z", "2"),
+            Err("not_found")
+        );
+        assert_eq!(
+            save_login(&mut data, url, "ann", "", ""),
+            Err("bad_request")
+        );
     }
 
     #[test]
     fn pairing_codes_match_the_extension() {
         // The extension computes the same code from the same token (see
-        // pairingCode in browser-extension/vaultrust.js).
+        // pairingCode in browser-extension/shared.js).
         let hash = token_hash("00".repeat(32).as_str());
         assert_eq!(hash.len(), 64);
         let n = u32::from_str_radix(&hash[..6], 16).unwrap() % 1_000_000;
@@ -698,30 +1093,27 @@ mod tests {
             }
         });
         let token = "ab".repeat(32);
-        let req = |kind: &str| Request {
-            kind: kind.into(),
-            token: token.clone(),
-            url: "https://example.com".into(),
-            browser: "Edge".into(),
-            ..Default::default()
+        let req = |kind: &str| {
+            let mut r = Request::default();
+            r.kind = kind.into();
+            r.token = token.clone();
+            r.url = "https://example.com".into();
+            r.browser = "Edge".into();
+            r
         };
-        let code = |r: Reply| {
-            serde_json::from_slice::<serde_json::Value>(&r).unwrap()["error"]
-                .as_str()
-                .map(str::to_string)
-        };
+        let code = |r: Reply| json(&r)["error"].as_str().map(str::to_string);
         assert_eq!(
-            code(link.answer(&req("logins"))).as_deref(),
+            code(link.answer(req("logins"))).as_deref(),
             Some("disabled")
         );
         link.enabled.store(true, Ordering::Relaxed);
         assert_eq!(
-            code(link.answer(&req("logins"))).as_deref(),
+            code(link.answer(req("logins"))).as_deref(),
             Some("unpaired")
         );
 
         // Asking to pair queues the question and brings the window forward.
-        assert_eq!(code(link.answer(&req("pair"))).as_deref(), Some("unpaired"));
+        assert_eq!(code(link.answer(req("pair"))).as_deref(), Some("unpaired"));
         assert!(shown.load(Ordering::Relaxed));
         let Ok(Job::Pair { browser, hash }) = jobs.try_recv() else {
             panic!("expected a pairing request");
@@ -732,26 +1124,28 @@ mod tests {
         );
         link.paired.lock().unwrap().push(hash);
 
-        assert_eq!(code(link.answer(&req("logins"))).as_deref(), Some("locked"));
+        assert_eq!(code(link.answer(req("logins"))).as_deref(), Some("locked"));
+        assert_eq!(json(&link.answer(req("status")))["state"], "locked");
         unlocked.store(true, Ordering::Relaxed);
+        assert_eq!(json(&link.answer(req("status")))["state"], "unlocked");
         // The window thread answers.
         let answering = std::thread::spawn(move || {
-            if let Ok(Job::Logins { url, reply }) = jobs.recv() {
-                let _ = reply.send(logins_reply(
-                    &[login(1, "https://example.com", "u", "p")],
-                    &url,
-                ));
+            if let Ok(Job::Vault { req, reply }) = jobs.recv() {
+                let entries = [login(1, "https://example.com", "u", "p")];
+                let _ = reply.send(logins_reply(&entries, &req.url));
             }
         });
-        let r: serde_json::Value = serde_json::from_slice(&link.answer(&req("logins"))).unwrap();
+        let r = json(&link.answer(req("logins")));
         assert_eq!(r["logins"][0]["username"], "u");
         answering.join().unwrap();
+        assert_eq!(
+            code(link.answer(req("nonsense"))).as_deref(),
+            Some("bad_request")
+        );
 
-        let stranger = Request {
-            token: "cd".repeat(32),
-            ..req("fill")
-        };
-        assert_eq!(code(link.answer(&stranger)).as_deref(), Some("unpaired"));
+        let mut stranger = req("fill");
+        stranger.token = "cd".repeat(32);
+        assert_eq!(code(link.answer(stranger)).as_deref(), Some("unpaired"));
     }
 
     #[cfg(windows)]
@@ -798,6 +1192,58 @@ mod tests {
     }
 
     #[test]
+    fn origins_titles_and_browsers() {
+        assert_eq!(
+            origin("HTTPS://a.example.com:8443/x?y#z"),
+            "https://a.example.com:8443"
+        );
+        assert_eq!(site_title("https://accounts.google.com/"), "Google");
+        assert!(BROWSERS[1].is("Microsoft Edge"));
+        assert!(!BROWSERS[0].is("Microsoft Edge"));
+    }
+
+    /// Every message the extension shows exists in English and Greek.
+    #[test]
+    fn extension_messages_are_translated() {
+        let locale = |lang: &str| -> serde_json::Value {
+            let path = format!("_locales/{lang}/messages.json");
+            let (_, data) = EXTENSION_FILES.iter().find(|(n, _)| *n == path).unwrap();
+            serde_json::from_slice(data).unwrap()
+        };
+        let (en, el) = (locale("en"), locale("el"));
+        let mut keys: Vec<String> = Vec::new();
+        for (name, data) in EXTENSION_FILES {
+            let text = String::from_utf8_lossy(data);
+            if name.ends_with(".js") {
+                let parts: Vec<&str> = text.split("t(\"").collect();
+                for (before, part) in parts.iter().zip(&parts[1..]) {
+                    // Only `t("…")` itself, not `get("…")`.
+                    if before.ends_with(|c: char| c.is_alphanumeric() || c == '_' || c == '.') {
+                        continue;
+                    }
+                    keys.push(part.split('"').next().unwrap().to_string());
+                }
+            }
+            for part in text.split("__MSG_").skip(1) {
+                keys.push(part.split("__").next().unwrap().to_string());
+            }
+        }
+        assert!(keys.len() > 40);
+        for key in &keys {
+            assert!(en[key]["message"].is_string(), "{key} missing in English");
+            assert!(el[key]["message"].is_string(), "{key} missing in Greek");
+        }
+        for (key, value) in en.as_object().unwrap() {
+            let holes = |v: &serde_json::Value| v["placeholders"].as_object().map(|p| p.len());
+            assert_eq!(
+                holes(value),
+                holes(&el[key]),
+                "placeholders differ for {key}"
+            );
+        }
+    }
+
+    #[test]
     fn host_manifest_allows_only_the_extension() {
         let m: serde_json::Value = serde_json::from_str(&host_manifest(std::path::Path::new(
             r"C:\Apps\VaultRust.exe",
@@ -819,5 +1265,22 @@ mod tests {
             .map(|n| (b'a' + n) as char)
             .collect();
         assert_eq!(id, EXTENSION_ID);
+        // Every file the manifest and pages refer to is built in.
+        let names: Vec<&str> = EXTENSION_FILES.iter().map(|(n, _)| *n).collect();
+        for (_, data) in EXTENSION_FILES {
+            let text = String::from_utf8_lossy(data);
+            for name in [
+                "content.js",
+                "menu.html",
+                "bar.html",
+                "popup.html",
+                "shared.js",
+                "ui.css",
+            ] {
+                if text.contains(name) {
+                    assert!(names.contains(&name), "{name} is missing");
+                }
+            }
+        }
     }
 }

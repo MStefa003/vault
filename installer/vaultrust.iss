@@ -64,6 +64,7 @@ Type: files; Name: "{app}\VaultRust.new.exe"
 ; extension); the browsers' own copies are removed in the browsers.
 Type: filesandordirs; Name: "{localappdata}\VaultRust\Browser extension"
 Type: files; Name: "{localappdata}\VaultRust\com.vaultrust.browser.json"
+Type: files; Name: "{localappdata}\VaultRust\Add VaultRust to your browser.html"
 
 [Code]
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

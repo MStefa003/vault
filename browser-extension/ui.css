@@ -1,0 +1,146 @@
+/* The colours of the VaultRust app (light and dark), shared by the popup,
+   the in-page menu and the save bar. */
+:root {
+  --bg: #f6f4f0;
+  --surface: #ffffff;
+  --hover: #efece7;
+  --border: #ddd8d0;
+  --text: #1f1d1a;
+  --dim: #5b564f;
+  --faint: #8a847b;
+  --accent: #1e7a54;
+  --accent-fill: #237f58;
+  --accent-bg: rgba(35, 127, 88, 0.1);
+  --danger: #c03f37;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #171615;
+    --surface: #1e1d1b;
+    --hover: #2d2b28;
+    --border: #2e2c29;
+    --text: #ece8e2;
+    --dim: #a59f96;
+    --faint: #746f68;
+    --accent: #6fc29b;
+    --accent-fill: #2f8560;
+    --accent-bg: rgba(111, 194, 155, 0.12);
+    --danger: #e8665f;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.primary {
+  padding: 7px 14px;
+  border: 0;
+  background: var(--accent-fill);
+  color: #fff;
+  font-weight: 600;
+}
+
+.primary:hover { filter: brightness(1.08); }
+
+.secondary {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.secondary:hover { background: var(--hover); }
+
+.link {
+  border: 0;
+  background: none;
+  color: var(--accent);
+  padding: 4px 0;
+}
+
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dim);
+}
+
+.icon-btn:hover { background: var(--hover); color: var(--text); }
+
+.message { color: var(--dim); margin: 0 0 12px; }
+.message strong { color: var(--text); display: block; margin-bottom: 2px; }
+.error { color: var(--danger); }
+.faint { color: var(--faint); font-size: 12px; }
+
+.rows { display: flex; flex-direction: column; gap: 2px; }
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 7px;
+}
+
+.row:hover { background: var(--hover); }
+
+.row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+
+.row .actions { display: flex; padding-right: 4px; }
+
+.tile {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  color: #fff;
+}
+
+.who { min-width: 0; display: flex; flex-direction: column; }
+.who .title, .who .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.who .title { font-weight: 600; }
+.who .sub { color: var(--dim); font-size: 12px; }
+
+.code {
+  font: 600 24px/1.2 "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 2px;
+  text-align: center;
+  padding: 10px;
+  margin: 4px 0 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}

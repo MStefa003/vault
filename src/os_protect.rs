@@ -1423,17 +1423,40 @@ pub fn set_user_registry_default(subkey: &str, value: Option<&str>) -> Result<()
     }
 }
 
-/// The default value of a key under HKEY_CURRENT_USER.
+/// Where a program is installed, from its "App Paths" registration (per
+/// user, then for the machine): how Windows finds e.g. `msedge.exe`.
 #[cfg(windows)]
-pub fn user_registry_default(subkey: &str) -> Option<String> {
-    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
+pub fn app_path(exe: &str) -> Option<std::path::PathBuf> {
+    let key = format!(r"Software\Microsoft\Windows\CurrentVersion\App Paths\{exe}");
+    registry_default(false, &key)
+        .or_else(|| registry_default(true, &key))
+        .map(|p| std::path::PathBuf::from(p.trim_matches('"')))
+}
+
+#[cfg(not(windows))]
+pub fn app_path(_exe: &str) -> Option<std::path::PathBuf> {
+    None
+}
+
+/// The default value of a key under HKEY_CURRENT_USER (or, with
+/// `machine`, HKEY_LOCAL_MACHINE).
+#[cfg(windows)]
+fn registry_default(machine: bool, subkey: &str) -> Option<String> {
+    use windows_sys::Win32::System::Registry::{
+        RegGetValueW, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ,
+    };
+    let root = if machine {
+        HKEY_LOCAL_MACHINE
+    } else {
+        HKEY_CURRENT_USER
+    };
     let key = run_key::wide(subkey);
     let mut buf = vec![0u16; 1024];
     let mut size = (buf.len() * 2) as u32;
     // SAFETY: all pointers are valid for the stated sizes; `size` is in bytes.
     let rc = unsafe {
         RegGetValueW(
-            HKEY_CURRENT_USER,
+            root,
             key.as_ptr(),
             std::ptr::null(),
             RRF_RT_REG_SZ,
@@ -1456,11 +1479,6 @@ pub fn user_registry_default(subkey: &str) -> Option<String> {
 #[cfg(not(windows))]
 pub fn set_user_registry_default(_subkey: &str, _value: Option<&str>) -> Result<(), String> {
     Err("only available on Windows".into())
-}
-
-#[cfg(not(windows))]
-pub fn user_registry_default(_subkey: &str) -> Option<String> {
-    None
 }
 
 #[cfg(all(test, windows))]
