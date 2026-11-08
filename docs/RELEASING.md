@@ -60,6 +60,10 @@ installer with Inno Setup (`installer/vaultrust.iss`) and publishes:
 * `VaultRust-Setup-0.2.0.exe` — what people download and run;
 * `VaultRust.exe` and `VaultRust.exe.sig` — what installed copies update
   themselves from;
+* `latest.json` — the version and its notes, which installed copies (0.8.1
+  and later) read to find out about the release. It is an ordinary download,
+  so it isn't subject to the GitHub API's limit of 60 requests an hour per
+  internet connection; releases without it are found through the API;
 * `VaultRust-Firefox.xpi` and `firefox-updates.json` — the signed Firefox
   add-on, which "Add to Firefox" downloads, and what installed add-ons
   update from (the manifest's `update_url`);

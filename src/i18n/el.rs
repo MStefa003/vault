@@ -894,6 +894,7 @@ pub static TABLE: &[(&str, &str)] = &[
     ("Report a problem…", "Αναφορά προβλήματος…"),
     ("Opens GitHub in your browser to describe what went wrong. Nothing from your vault is sent", "Ανοίγει το GitHub στο πρόγραμμα περιήγησης για να περιγράψετε τι πήγε στραβά. Τίποτα από την κρύπτη σας δεν αποστέλλεται"),
     ("Couldn't open your browser", "Δεν ήταν δυνατό το άνοιγμα του προγράμματος περιήγησης"),
+    ("GitHub is busy right now; VaultRust will try again later", "Το GitHub είναι απασχολημένο αυτή τη στιγμή· το VaultRust θα ξαναδοκιμάσει αργότερα"),
     // Settings tabs.
     ("Browser", "Περιηγητής"),
     ("Help", "Βοήθεια"),

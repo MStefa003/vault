@@ -1,8 +1,9 @@
 //! Updates from GitHub releases.
 //!
 //! This is the only part of VaultRust that uses the network, and it never
-//! sends vault data: it asks the GitHub API for the latest release of
-//! [`REPO`] and, if the user agrees, downloads the program from it.
+//! sends vault data: it reads [`LATEST_ASSET`] from the latest release of
+//! [`REPO`] (or, for releases without one, asks the GitHub API) and, if the
+//! user agrees, downloads the program from it.
 //!
 //! Every release is signed with an Ed25519 key held by the release workflow.
 //! A download is installed only if its signature verifies against
@@ -20,6 +21,11 @@ pub const REPO: &str = "MStefa003/vault";
 pub const EXE_ASSET: &str = "VaultRust.exe";
 /// Name of its signature asset.
 pub const SIG_ASSET: &str = "VaultRust.exe.sig";
+/// A small file in every release since 0.8.1 with its version and notes.
+/// It is read like any other download, which GitHub doesn't limit the way it
+/// limits its API (60 requests an hour per internet connection, shared by
+/// every computer and program behind it).
+pub const LATEST_ASSET: &str = "latest.json";
 /// The release-signing public key (see docs/RELEASING.md).
 pub const PUBLIC_KEY: [u8; 32] = [
     0xda, 0xd1, 0xf6, 0x22, 0x0a, 0x49, 0x63, 0x7d, 0x64, 0xb1, 0x78, 0xb0, 0x09, 0x86, 0xf4, 0x6a,
@@ -64,6 +70,13 @@ impl std::fmt::Display for Version {
 pub enum UpdateError {
     #[error("{}", crate::i18n::format(crate::i18n::tr("couldn't reach GitHub: {0}"), &[("0", .0)]))]
     Network(String),
+    /// GitHub turned the request away for now (403 / 429: too many
+    /// requests from this internet connection).
+    #[error(
+        "{}",
+        crate::i18n::tr("GitHub is busy right now; VaultRust will try again later")
+    )]
+    Busy,
     #[error("{}", crate::i18n::tr("GitHub's answer couldn't be read"))]
     BadResponse,
     #[error("{}", crate::i18n::format(crate::i18n::tr("the release is missing {0}"), &[("0", .0)]))]
@@ -108,6 +121,34 @@ struct ApiRelease {
 struct ApiAsset {
     name: String,
     browser_download_url: String,
+}
+
+#[derive(serde::Deserialize)]
+struct LatestFile {
+    version: String,
+    #[serde(default)]
+    notes: String,
+}
+
+/// Read a release's [`LATEST_ASSET`]. `Ok(None)` if it is not newer than
+/// `current`. The download addresses are made here, not taken from the file;
+/// a wrong file can't install anything either way, since the download has
+/// to carry a valid signature for its version.
+pub fn parse_latest_file(json: &[u8], current: Version) -> Result<Option<Release>, UpdateError> {
+    // PowerShell can write a UTF-8 byte order mark, which JSON doesn't allow.
+    let json = json.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(json);
+    let f: LatestFile = serde_json::from_slice(json).map_err(|_| UpdateError::BadResponse)?;
+    let version = Version::parse(&f.version).ok_or(UpdateError::BadResponse)?;
+    if version <= current {
+        return Ok(None);
+    }
+    let url = |name: &str| format!("https://github.com/{REPO}/releases/download/v{version}/{name}");
+    Ok(Some(Release {
+        version,
+        notes: f.notes,
+        exe_url: url(EXE_ASSET),
+        sig_url: url(SIG_ASSET),
+    }))
 }
 
 /// Read the GitHub API's "latest release" answer. `Ok(None)` if it is not
@@ -177,12 +218,27 @@ pub fn hex_encode(b: &[u8]) -> String {
 
 /// Ask GitHub whether a newer release exists.
 pub fn check() -> Result<Option<Release>, UpdateError> {
+    use crate::os_protect::{http_get, HttpError};
+    let url = format!("https://github.com/{REPO}/releases/latest/download/{LATEST_ASSET}");
+    match http_get(&url, MAX_API_BYTES) {
+        Ok(body) => return parse_latest_file(&body, current_version()),
+        // A release from before 0.8.1, or none yet: ask the API.
+        Err(HttpError::Status(404)) => {}
+        Err(e) => return Err(network_error(e)),
+    }
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
-    match crate::os_protect::http_get(&url, MAX_API_BYTES) {
+    match http_get(&url, MAX_API_BYTES) {
         Ok(body) => parse_latest(&body, current_version()),
         // No release published yet.
-        Err(crate::os_protect::HttpError::Status(404)) => Ok(None),
-        Err(e) => Err(UpdateError::Network(e.to_string())),
+        Err(HttpError::Status(404)) => Ok(None),
+        Err(e) => Err(network_error(e)),
+    }
+}
+
+fn network_error(e: crate::os_protect::HttpError) -> UpdateError {
+    match e {
+        crate::os_protect::HttpError::Status(403 | 429) => UpdateError::Busy,
+        e => UpdateError::Network(e.to_string()),
     }
 }
 
@@ -191,7 +247,7 @@ pub fn download(release: &Release) -> Result<Vec<u8>, UpdateError> {
     let get = |url: &str, max: usize| {
         crate::os_protect::http_get(url, max).map_err(|e| match e {
             crate::os_protect::HttpError::TooLarge => UpdateError::TooLarge,
-            e => UpdateError::Network(e.to_string()),
+            e => network_error(e),
         })
     };
     let sig = get(&release.sig_url, MAX_SIG_BYTES)?;
@@ -346,6 +402,54 @@ fn query_encode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn latest_file_is_read() {
+        let json = br#"{"version":"9.1.0","notes":"- Something new"}"#;
+        let r = parse_latest_file(json, Version(0, 8, 0)).unwrap().unwrap();
+        assert_eq!(r.version, Version(9, 1, 0));
+        assert_eq!(r.notes, "- Something new");
+        assert_eq!(
+            r.exe_url,
+            format!("https://github.com/{REPO}/releases/download/v9.1.0/VaultRust.exe")
+        );
+        assert_eq!(
+            r.sig_url,
+            format!("https://github.com/{REPO}/releases/download/v9.1.0/VaultRust.exe.sig")
+        );
+        // With a byte order mark, and without notes.
+        let bom = b"\xEF\xBB\xBF{\"version\":\"9.1.0\"}";
+        assert_eq!(
+            parse_latest_file(bom, Version(0, 8, 0))
+                .unwrap()
+                .unwrap()
+                .notes,
+            ""
+        );
+        // Not newer: nothing to do.
+        assert_eq!(parse_latest_file(json, Version(9, 1, 0)).unwrap(), None);
+        assert_eq!(parse_latest_file(json, Version(10, 0, 0)).unwrap(), None);
+        // Garbage.
+        assert_eq!(
+            parse_latest_file(b"<html>", Version(0, 8, 0)),
+            Err(UpdateError::BadResponse)
+        );
+        assert_eq!(
+            parse_latest_file(br#"{"version":"soon"}"#, Version(0, 8, 0)),
+            Err(UpdateError::BadResponse)
+        );
+    }
+
+    #[test]
+    fn too_many_requests_is_busy_not_an_error_code() {
+        use crate::os_protect::HttpError;
+        assert_eq!(network_error(HttpError::Status(403)), UpdateError::Busy);
+        assert_eq!(network_error(HttpError::Status(429)), UpdateError::Busy);
+        assert!(matches!(
+            network_error(HttpError::Status(500)),
+            UpdateError::Network(_)
+        ));
+    }
 
     #[test]
     fn bug_report_page_is_on_github_with_the_version() {

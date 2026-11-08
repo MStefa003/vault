@@ -95,6 +95,10 @@ jobs:
           $m = [regex]::Match($text, "(?ms)^## $v\b[^\n]*\n(.*?)(?=^## |\z)")
           if (-not $m.Success -or -not $m.Groups[1].Value.Trim()) { throw "CHANGELOG.md has no notes for ${{ steps.version.outputs.version }}" }
           Set-Content release\NOTES.md $m.Groups[1].Value.Trim() -Encoding utf8
+          # What installed copies read to find out about this release: a
+          # plain download, not rate-limited like GitHub's API.
+          @{ version = "${{ steps.version.outputs.version }}"; notes = $m.Groups[1].Value.Trim() } |
+            ConvertTo-Json | Set-Content release\latest.json -Encoding utf8
 
       - name: Publish
         uses: softprops/action-gh-release@v2
@@ -106,6 +110,7 @@ jobs:
             release/VaultRust-Setup-${{ steps.version.outputs.version }}.exe
             release/VaultRust.exe
             release/VaultRust.exe.sig
+            release/latest.json
             release/VaultRust-Browser-Extension-${{ steps.version.outputs.version }}.zip
             release/VaultRust-Firefox.xpi
             release/firefox-updates.json
