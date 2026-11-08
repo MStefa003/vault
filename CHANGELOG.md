@@ -9,6 +9,9 @@ heading.
 
 ## Unreleased
 
+- Settings is split into tabs (Vault, Security, Backups, Browser, App, Help), so everything is easier to find, and the text under each setting is larger and easier to read. Updates, What's new and Report a problem are under Help.
+- "Report a problem" opens the bug form on GitHub in your browser, instead of File Explorer.
+
 ## 0.8.0 — 2026-11-08
 
 - Take VaultRust with you on a USB stick: Settings → App → Put VaultRust on a USB stick makes a portable copy that runs on any computer, keeps its settings on the stick and leaves nothing behind on the computer.

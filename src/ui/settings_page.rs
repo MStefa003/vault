@@ -35,7 +35,44 @@ enum KeyFileMode {
     Remove,
 }
 
+/// The parts of Settings, one tab each.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum SettingsTab {
+    #[default]
+    Vault,
+    Security,
+    Backups,
+    Browser,
+    App,
+    Help,
+}
+
+impl SettingsTab {
+    pub const ALL: [SettingsTab; 6] = [
+        SettingsTab::Vault,
+        SettingsTab::Security,
+        SettingsTab::Backups,
+        SettingsTab::Browser,
+        SettingsTab::App,
+        SettingsTab::Help,
+    ];
+
+    fn label(self) -> String {
+        let (icon, text) = match self {
+            SettingsTab::Vault => (icons::VAULT, tr("Vault")),
+            SettingsTab::Security => (icons::SHIELD_CHECK, tr("Security")),
+            SettingsTab::Backups => (icons::CLOCK_COUNTER_CLOCKWISE, tr("Backups")),
+            SettingsTab::Browser => (icons::BROWSER, tr("Browser")),
+            SettingsTab::App => (icons::SLIDERS_HORIZONTAL, tr("App")),
+            SettingsTab::Help => (icons::QUESTION, tr("Help")),
+        };
+        icons::with(icon, text)
+    }
+}
+
 pub struct SettingsState {
+    /// The tab shown.
+    pub tab: SettingsTab,
     name_buf: Option<String>,
     current: Zeroizing<String>,
     new: Zeroizing<String>,
@@ -52,6 +89,7 @@ pub struct SettingsState {
 impl Default for SettingsState {
     fn default() -> Self {
         SettingsState {
+            tab: SettingsTab::default(),
             name_buf: None,
             current: secret_buffer(),
             new: secret_buffer(),
@@ -89,28 +127,76 @@ fn report(ms: &mut MainState, svc: &mut Services, what: &str, e: VaultError) {
 
 pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) -> Option<Transition> {
     poll_password_job(ms, svc);
+    widgets::page_header(ui, tr("Settings"), "");
+    tab_bar(ui, &mut ms.settings.tab);
+    ui.add_space(14.0);
+    let tab = ms.settings.tab;
     egui::ScrollArea::vertical()
-        .id_salt("settings")
+        .id_salt(("settings", tab))
         .auto_shrink([false, false])
-        .show(ui, |ui| {
-            widgets::page_header(ui, tr("Settings"), tr("Stored inside the encrypted vault."));
-            vault_section(ui, ms, svc);
-            ui.add_space(12.0);
-            privacy_section(ui, ms, svc);
-            ui.add_space(12.0);
-            password_section(ui, ms);
-            ui.add_space(12.0);
-            backup_section(ui, ms, svc);
-            ui.add_space(12.0);
-            breach_section(ui, ms, svc);
-            ui.add_space(12.0);
-            import_export_section(ui, ms, svc);
-            ui.add_space(12.0);
-            super::browser_link::settings_section(ui, svc);
-            ui.add_space(12.0);
-            app_section(ui, ms, svc);
+        .show(ui, |ui| match tab {
+            SettingsTab::Vault => {
+                vault_section(ui, ms, svc);
+                ui.add_space(12.0);
+                password_section(ui, ms);
+            }
+            SettingsTab::Security => {
+                privacy_section(ui, ms, svc);
+                ui.add_space(12.0);
+                breach_section(ui, ms, svc);
+            }
+            SettingsTab::Backups => {
+                backup_section(ui, ms, svc);
+                ui.add_space(12.0);
+                import_export_section(ui, ms, svc);
+            }
+            SettingsTab::Browser => super::browser_link::settings_section(ui, svc),
+            SettingsTab::App => app_section(ui, svc),
+            SettingsTab::Help => help_section(ui, ms, svc),
         });
     None
+}
+
+/// The row of tabs at the top of Settings.
+fn tab_bar(ui: &mut egui::Ui, tab: &mut SettingsTab) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+        for t in SettingsTab::ALL {
+            let on = *tab == t;
+            let b = egui::Button::new(RichText::new(t.label()).size(14.0).color(if on {
+                text()
+            } else {
+                text_dim()
+            }))
+            .fill(if on {
+                surface_2()
+            } else {
+                egui::Color32::TRANSPARENT
+            })
+            .stroke(if on {
+                egui::Stroke::new(1.0_f32, border())
+            } else {
+                egui::Stroke::NONE
+            })
+            .corner_radius(8.0)
+            .min_size(egui::vec2(0.0, 34.0));
+            let r = ui.add(b).on_hover_cursor(egui::CursorIcon::PointingHand);
+            if on {
+                // An accent line under the chosen tab.
+                let y = r.rect.bottom() + 2.0;
+                ui.painter().line_segment(
+                    [
+                        egui::pos2(r.rect.left() + 10.0, y),
+                        egui::pos2(r.rect.right() - 10.0, y),
+                    ],
+                    egui::Stroke::new(2.0_f32, accent()),
+                );
+            }
+            if r.clicked() {
+                *tab = t;
+            }
+        }
+    });
 }
 
 fn vault_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
@@ -172,35 +258,39 @@ fn vault_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
             }
         }
         widgets::divider(ui, 16.0);
-        ui.add_space(2.0);
-        egui::Grid::new("vault_info")
-            .num_columns(2)
-            .spacing([24.0, 4.0])
+        egui::CollapsingHeader::new(dim(tr("Technical details")))
+            .id_salt("vault_details")
+            .default_open(false)
             .show(ui, |ui| {
-                ui.label(faint(tr("Encryption")));
-                ui.label(small(tr("XChaCha20-Poly1305, 256-bit key")));
-                ui.end_row();
-                ui.label(faint(tr("Key derivation")));
-                ui.label(small(ms.vault.kdf_params().describe()));
-                ui.end_row();
-                ui.label(faint(tr("Unlocks with")));
-                ui.label(small(if ms.vault.uses_key_file() {
-                    tr("Master password + key file")
-                } else {
-                    tr("Master password")
-                }));
-                ui.end_row();
-                ui.label(faint(tr("File format")));
-                ui.label(small(trf!("Version {FORMAT_VERSION}", FORMAT_VERSION)));
-                ui.end_row();
-                ui.label(faint(tr("Vault ID")));
-                ui.label(
-                    RichText::new(ms.vault.vault_id_hex())
-                        .family(egui::FontFamily::Monospace)
-                        .size(11.5)
-                        .color(text_dim()),
-                );
-                ui.end_row();
+                egui::Grid::new("vault_info")
+                    .num_columns(2)
+                    .spacing([24.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label(faint(tr("Encryption")));
+                        ui.label(small(tr("XChaCha20-Poly1305, 256-bit key")));
+                        ui.end_row();
+                        ui.label(faint(tr("Key derivation")));
+                        ui.label(small(ms.vault.kdf_params().describe()));
+                        ui.end_row();
+                        ui.label(faint(tr("Unlocks with")));
+                        ui.label(small(if ms.vault.uses_key_file() {
+                            tr("Master password + key file")
+                        } else {
+                            tr("Master password")
+                        }));
+                        ui.end_row();
+                        ui.label(faint(tr("File format")));
+                        ui.label(small(trf!("Version {FORMAT_VERSION}", FORMAT_VERSION)));
+                        ui.end_row();
+                        ui.label(faint(tr("Vault ID")));
+                        ui.label(
+                            RichText::new(ms.vault.vault_id_hex())
+                                .family(egui::FontFamily::Monospace)
+                                .size(11.5)
+                                .color(text_dim()),
+                        );
+                        ui.end_row();
+                    });
             });
     });
 }
@@ -829,7 +919,7 @@ fn import_export_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Servic
     });
 }
 
-fn app_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
+fn app_section(ui: &mut egui::Ui, svc: &mut Services) {
     section(ui, tr("App"), |ui| {
         let count = svc.recent.paths.len();
         let mut clear = false;
@@ -890,23 +980,7 @@ fn app_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
             }
         }
         widgets::divider(ui, 16.0);
-        let mut tour = false;
-        widgets::setting_row(
-            ui,
-            tr("Welcome tour"),
-            tr("A quick look at saving, copying, auto-type and two-step codes"),
-            160.0,
-            |ui| tour = widgets::secondary_button(ui, tr("Show the tour again")).clicked(),
-        );
-        if tour {
-            // It points at the Overview's buttons.
-            ms.page = super::main_view::Page::Dashboard;
-            ms.tour = Some(super::tutorial::Tour::default());
-        }
-        widgets::divider(ui, 16.0);
         startup_row(ui, svc);
-        widgets::divider(ui, 16.0);
-        super::updates::settings_row(ui, svc.updates, svc.prefs);
         widgets::divider(ui, 16.0);
         let status = |ui: &mut egui::Ui, on: bool| {
             ui.label(if on {
@@ -948,6 +1022,28 @@ fn app_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
         });
         widgets::divider(ui, 16.0);
         portable_row(ui, svc);
+    });
+}
+
+fn help_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
+    section(ui, tr("Updates"), |ui| {
+        super::updates::settings_row(ui, svc.updates, svc.prefs);
+    });
+    ui.add_space(12.0);
+    section(ui, tr("Help"), |ui| {
+        let mut tour = false;
+        widgets::setting_row(
+            ui,
+            tr("Welcome tour"),
+            tr("A quick look at saving, copying, auto-type and two-step codes"),
+            160.0,
+            |ui| tour = widgets::secondary_button(ui, tr("Show the tour again")).clicked(),
+        );
+        if tour {
+            // It points at the Overview's buttons.
+            ms.page = super::main_view::Page::Dashboard;
+            ms.tour = Some(super::tutorial::Tour::default());
+        }
         widgets::divider(ui, 16.0);
         let mut report = false;
         widgets::setting_row(

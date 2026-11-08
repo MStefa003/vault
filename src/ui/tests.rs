@@ -124,6 +124,14 @@ fn every_page_editor_and_modal_renders() {
         h.step();
         h.step();
     }
+    for tab in super::settings_page::SettingsTab::ALL {
+        let ms = main_state(&mut h);
+        ms.page = Page::Settings;
+        ms.settings.tab = tab;
+        h.step();
+        h.step();
+    }
+    main_state(&mut h).settings.tab = Default::default();
 
     let first = main_state(&mut h).vault.data().entries[0].id;
     main_state(&mut h).open_entry(first);
@@ -939,6 +947,20 @@ fn render_screenshots() {
         }
         shoot(&mut h, name);
     }
+    for (i, tab) in super::settings_page::SettingsTab::ALL
+        .into_iter()
+        .enumerate()
+        .skip(1)
+    {
+        let ms = main_state(&mut h);
+        ms.page = Page::Settings;
+        ms.settings.tab = tab;
+        shoot(
+            &mut h,
+            &format!("11{}-settings-{tab:?}", (b'a' + i as u8) as char),
+        );
+    }
+    main_state(&mut h).settings.tab = Default::default();
     // A maximised full-HD window.
     main_state(&mut h).page = Page::Dashboard;
     h.set_size(eframe::egui::vec2(1920.0, 1040.0));
@@ -1060,6 +1082,7 @@ fn render_screenshots() {
             added: 1_762_400_000,
         });
     main_state(&mut tall).page = Page::Settings;
+    main_state(&mut tall).settings.tab = super::settings_page::SettingsTab::Browser;
     shoot(&mut tall, "30-browser-settings");
     tall.state_mut().browser.show_steps_for(0);
     shoot(&mut tall, "30b-browser-adding");

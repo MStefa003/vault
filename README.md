@@ -51,13 +51,13 @@ code-signed yet: choose **More info → Run anyway**.
 * **Less typing**: items without a title are named after their website, and
   the usernames and emails you use most are one click away
 * **Welcome tour**: six short cards the first time you open a vault (replay it
-  from Settings)
+  from Settings → Help)
 * **Automatic updates**: VaultRust checks
   [GitHub](https://github.com/MStefa003/vault/releases) twice a day and shows
   a notification when a new version is out, with what's new and a button to
   install it. Releases are signed, and an update is only installed if its
   signature checks out. Turn the check off in Settings. After an update it
-  shows what changed; Settings → App → What's new lists every version
+  shows what changed; Settings → Help → What's new lists every version
 * **Attachments**: keep recovery codes, key files or document scans inside an
   item, encrypted with the rest of the vault (up to 10 MB per file, 50 MB per
   vault)
@@ -73,8 +73,7 @@ code-signed yet: choose **More info → Run anyway**.
   save new logins and update changed passwords after you sign in; payment
   and address forms are filled from your cards and identities; the
   toolbar button lists the site's logins, searches the vault and generates
-  passwords (following your site rules). Add it from Settings → Browser
-  extension. See [Browser extension](#browser-extension) below
+  passwords (following your site rules). Add it from Settings → Browser. See [Browser extension](#browser-extension) below
 * **Windows Hello**: unlock with fingerprint, face or PIN (the master
   password is still needed once after VaultRust starts)
 * **Expiry reminders**: give items an expiry date (API keys, work passwords);
@@ -101,7 +100,7 @@ code-signed yet: choose **More info → Run anyway**.
   its settings on the stick and sets nothing up on the computer (no Start
   with Windows, browser extension or Windows Hello). See
   [Portable mode](#portable-mode) below
-* **Report a problem**: Settings → App opens GitHub's bug form in your
+* **Report a problem**: Settings → Help opens GitHub's bug form in your
   browser, with the VaultRust version filled in and nothing from your vault
 * Master passwords are Unicode-normalised, so accented passwords always match
 * Window hidden from screenshots and screen sharing while unlocked; revealed
@@ -177,7 +176,7 @@ record the master password as you type it, whatever VaultRust does.
 VaultRust never goes online, so it checks against a list you download
 yourself: get the SHA-1 Pwned Passwords list as a single file ordered by hash
 (for example with the official Have I Been Pwned `PwnedPasswordsDownloader`)
-and choose it under **Settings → Breached-password check**. The file is
+and choose it under **Settings → Security → Breached-password check**. The file is
 searched in place with a few dozen small reads per password, so the full
 ~40 GB list works.
 
@@ -221,7 +220,7 @@ cargo test --lib render_screenshots -- --ignored
 
 The extension isn't in the browsers' stores; VaultRust adds it:
 
-1. In VaultRust, open **Settings → Browser extension** and turn on **Fill in
+1. In VaultRust, open **Settings → Browser** and turn on **Fill in
    and save logins in your browser**.
 2. Click **Add to Chrome** (or Edge, Brave). VaultRust opens the browser on
    a page with the steps, shows the extension's folder selected in File

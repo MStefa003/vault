@@ -346,7 +346,7 @@ pub fn setting_row(
     control: impl FnOnce(&mut Ui),
 ) {
     let w = ui.available_width();
-    let h = if desc.is_empty() { 32.0 } else { 44.0 };
+    let h = if desc.is_empty() { 34.0 } else { 50.0 };
     ui.allocate_ui_with_layout(
         Vec2::new(w, h),
         Layout::right_to_left(Align::Center),
@@ -362,12 +362,15 @@ pub fn setting_row(
                 Vec2::new(ui.available_width(), h),
                 Layout::top_down(Align::Min),
                 |ui| {
-                    ui.spacing_mut().item_spacing.y = 1.0;
-                    let text_h = if desc.is_empty() { 18.0 } else { 36.0 };
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    let text_h = if desc.is_empty() { 19.0 } else { 40.0 };
                     ui.add_space(((h - text_h) / 2.0).max(0.0));
-                    ui.add(egui::Label::new(RichText::new(title).color(text())).truncate());
+                    ui.add(
+                        egui::Label::new(RichText::new(title).size(14.5).color(text())).truncate(),
+                    );
                     if !desc.is_empty() {
-                        ui.add(egui::Label::new(faint(desc)).truncate());
+                        // Hovering a cut-off description shows all of it.
+                        ui.add(egui::Label::new(small(desc)).truncate());
                     }
                 },
             );

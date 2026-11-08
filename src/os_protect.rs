@@ -1046,14 +1046,36 @@ pub fn record_installed_version(_version: &str) {}
 /// Open the page for reporting a problem on GitHub in the default browser,
 /// when the user asks for it. It is the only web page VaultRust opens.
 /// Tests never start a browser.
+#[cfg(windows)]
 pub fn open_bug_report_page() -> bool {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
     if cfg!(test) {
         return true;
     }
-    std::process::Command::new("explorer.exe")
-        .arg(crate::update::bug_report_url())
-        .spawn()
-        .is_ok()
+    // Not explorer.exe: it takes a long link full of %-escapes for a folder
+    // path and opens File Explorer instead of the browser.
+    let url = run_key::wide(&crate::update::bug_report_url());
+    let verb = run_key::wide("open");
+    // SAFETY: NUL-terminated UTF-16 strings that outlive the call; no window
+    // handle, parameters or working directory.
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            url.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    // Values above 32 mean success.
+    result as usize > 32
+}
+
+#[cfg(not(windows))]
+pub fn open_bug_report_page() -> bool {
+    cfg!(test)
 }
 
 /// Whether this is the only running VaultRust in the user's session.

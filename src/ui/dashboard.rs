@@ -45,6 +45,8 @@ const EMPTY_BLOCK_H: f32 = 400.0;
 
 enum Act {
     Nav(Nav),
+    /// Settings, on this tab.
+    Settings(settings_page::SettingsTab),
     Copy(Zeroizing<String>, &'static str, u64),
     Backup,
     Import,
@@ -82,6 +84,10 @@ pub fn show(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
     for act in acts {
         match act {
             Act::Nav(n) => ms.request(n),
+            Act::Settings(tab) => {
+                ms.settings.tab = tab;
+                ms.request(Nav::Page(Page::Settings));
+            }
             Act::Copy(v, what, id) => ms.copy_from(svc, id, &v, what),
             Act::Backup => ms.start_backup(svc),
             Act::Import => settings_page::start_import(ms, svc),
@@ -517,7 +523,7 @@ fn health(ui: &mut egui::Ui, ms: &MainState, now: i64, acts: &mut Vec<Act>) {
                     .color(warn()),
             );
             if widgets::link_button(ui, tr("Settings")).clicked() {
-                acts.push(Act::Nav(Nav::Page(Page::Settings)));
+                acts.push(Act::Settings(settings_page::SettingsTab::Security));
             }
         });
     }
