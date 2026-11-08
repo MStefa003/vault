@@ -9,6 +9,8 @@ heading.
 
 ## Unreleased
 
+## 0.8.1 — 2026-11-09
+
 - Settings is split into tabs (Vault, Security, Backups, Browser, App, Help), so everything is easier to find, and the text under each setting is larger and easier to read. Updates, What's new and Report a problem are under Help.
 - "Report a problem" opens the bug form on GitHub in your browser, instead of File Explorer.
 - Checking for updates no longer fails with "the server answered 403" when GitHub gets too many requests from your internet connection. VaultRust now finds new versions in a way GitHub doesn't limit, and if GitHub is busy anyway it says so and tries again later.
