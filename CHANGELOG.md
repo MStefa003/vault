@@ -9,6 +9,8 @@ heading.
 
 ## Unreleased
 
+## 0.8.0 — 2026-11-08
+
 - Take VaultRust with you on a USB stick: Settings → App → Put VaultRust on a USB stick makes a portable copy that runs on any computer, keeps its settings on the stick and leaves nothing behind on the computer.
 - Found a bug? Settings → App → Report a problem opens a form on GitHub in your browser, with your VaultRust version already filled in.
 
