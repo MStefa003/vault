@@ -57,9 +57,10 @@ impl BrowserLink {
         let Some(link) = &self.link else {
             return Ok(());
         };
-        link.enabled.store(prefs.browser_enabled, Ordering::Relaxed);
+        let enabled = prefs.browser_enabled && !crate::portable::is_on();
+        link.enabled.store(enabled, Ordering::Relaxed);
         self.apply_pairings(prefs);
-        if !prefs.browser_enabled || cfg!(test) {
+        if !enabled || cfg!(test) {
             // Tests never touch the registry or the real pipe.
             return Ok(());
         }
@@ -323,6 +324,17 @@ pub fn answer(ms: &mut MainState, svc: &mut Services, req: &Request) -> Reply {
 /// Settings → Browser extension.
 pub fn settings_section(ui: &mut egui::Ui, svc: &mut Services) {
     widgets::section(ui, tr("Browser extension"), |ui| {
+        if crate::portable::is_on() {
+            // Adding it would change the computer's browsers.
+            widgets::setting_row(
+                ui,
+                tr("Fill in and save logins in your browser"),
+                super::settings_page::portable_off(),
+                0.0,
+                |_| {},
+            );
+            return;
+        }
         let mut on = svc.prefs.browser_enabled;
         widgets::switch_row(
             ui,

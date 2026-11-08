@@ -279,7 +279,8 @@ mod platform {
 
     /// Whether Windows Hello is set up for this user (asked once per run).
     pub fn is_available() -> bool {
-        if cfg!(test) {
+        // A portable copy runs on computers that aren't the user's.
+        if cfg!(test) || crate::portable::is_on() {
             return false;
         }
         static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();

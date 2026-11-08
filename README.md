@@ -96,6 +96,13 @@ code-signed yet: choose **More info → Run anyway**.
 * Automatic lock after inactivity, manual lock (Ctrl+L), lock on minimize and
   **lock when Windows locks** (Win+L, sleep with sign-in, switching user)
 * Optional **key file** as a second factor
+* **Portable mode**: Settings → App → Put VaultRust on a USB stick copies
+  the program to a folder you choose. That copy runs on any computer, keeps
+  its settings on the stick and sets nothing up on the computer (no Start
+  with Windows, browser extension or Windows Hello). See
+  [Portable mode](#portable-mode) below
+* **Report a problem**: Settings → App opens GitHub's bug form in your
+  browser, with the VaultRust version filled in and nothing from your vault
 * Master passwords are Unicode-normalised, so accented passwords always match
 * Window hidden from screenshots and screen sharing while unlocked; revealed
   secrets re-masked automatically; growing delay after wrong passwords; the
@@ -146,6 +153,24 @@ vault; these protect against mistakes, not against losing the drive. Use
 **Back up** regularly and keep copies on a separate drive. There is no master
 password recovery: if you forget it (or lose the key file, if you use one),
 the vault cannot be opened.
+
+## Portable mode
+
+A copy of VaultRust with a file named `portable.txt` next to `VaultRust.exe`
+runs in portable mode. **Settings → App → Put VaultRust on a USB stick**
+makes such a copy; to make one by hand, copy `VaultRust.exe` to the stick
+and create an empty `portable.txt` beside it. Then put your vault on the
+stick too (Settings → Vault → Move…, or copy the `.vault` file).
+
+In portable mode, settings and the recent-vaults list are kept in a
+`VaultRust data` folder next to the program. Vaults on the stick are listed
+even when Windows gives it a different drive letter. Start with Windows, the
+browser extension and Windows Hello change the computer itself, so they are
+off. Updates still work and replace the program on the stick. Delete
+`portable.txt` to make the copy a normal one again.
+
+Only use a portable copy on computers you trust: malware on the computer can
+record the master password as you type it, whatever VaultRust does.
 
 ## Offline breached-password check
 

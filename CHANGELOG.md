@@ -9,6 +9,9 @@ heading.
 
 ## Unreleased
 
+- Take VaultRust with you on a USB stick: Settings → App → Put VaultRust on a USB stick makes a portable copy that runs on any computer, keeps its settings on the stick and leaves nothing behind on the computer.
+- Found a bug? Settings → App → Report a problem opens a form on GitHub in your browser, with your VaultRust version already filled in.
+
 ## 0.7.0 — 2026-11-07
 
 - The browser extension now works in Firefox too: Settings → Browser extension → Add to Firefox, then click "Add" when Firefox asks.

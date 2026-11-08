@@ -1,19 +1,47 @@
 //! List of recently opened vault *paths* (never contents or passwords),
-//! stored in `%APPDATA%\VaultRust\recent.txt` so the welcome screen can offer
-//! them. The user can clear it from Settings.
+//! stored in `%APPDATA%\VaultRust\recent.txt` (next to the program in
+//! portable mode) so the welcome screen can offer them. The user can clear it
+//! from Settings.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::storage::{atomic_write, WriteMode};
 
 const MAX_RECENT: usize = 8;
 
 fn store_path() -> Option<PathBuf> {
-    let base = std::env::var_os("APPDATA")
-        .or_else(|| std::env::var_os("XDG_CONFIG_HOME"))
-        .map(PathBuf::from)?;
-    Some(base.join("VaultRust").join("recent.txt"))
+    Some(crate::portable::settings_dir()?.join("recent.txt"))
+}
+
+/// The drive (or network share) a path is on, e.g. `E:`.
+fn drive(path: &Path) -> Option<String> {
+    match path.components().next() {
+        Some(Component::Prefix(p)) => Some(p.as_os_str().to_string_lossy().to_uppercase()),
+        _ => None,
+    }
+}
+
+/// A portable copy's drive letter changes from computer to computer, so
+/// vaults on its drive are stored without it (`\Passwords\My.vault`).
+fn encode(path: &Path, program_dir: Option<&Path>) -> PathBuf {
+    let own = program_dir.and_then(drive);
+    match drive(path) {
+        Some(d) if Some(&d) == own.as_ref() => path.components().skip(1).collect(),
+        _ => path.to_path_buf(),
+    }
+}
+
+/// The inverse of [`encode`]: put the program's drive back.
+fn decode(stored: &str, program_dir: Option<&Path>) -> PathBuf {
+    let path = PathBuf::from(stored);
+    let prefix = program_dir.and_then(|d| d.components().next());
+    match prefix {
+        Some(p @ Component::Prefix(_)) if path.has_root() && drive(&path).is_none() => {
+            Path::new(p.as_os_str()).join(&path)
+        }
+        _ => path,
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -32,7 +60,7 @@ impl RecentVaults {
             .lines()
             .map(str::trim)
             .filter(|l| !l.is_empty())
-            .map(PathBuf::from)
+            .map(|l| decode(l, crate::portable::program_dir()))
             .take(MAX_RECENT)
             .collect();
         RecentVaults {
@@ -76,7 +104,7 @@ impl RecentVaults {
         let body: String = self
             .paths
             .iter()
-            .map(|p| format!("{}\n", p.display()))
+            .map(|p| format!("{}\n", encode(p, crate::portable::program_dir()).display()))
             .collect();
         let _ = atomic_write(&p, body.as_bytes(), WriteMode::Replace);
     }
@@ -88,5 +116,35 @@ fn strip_verbatim(p: PathBuf) -> PathBuf {
     match s.strip_prefix(r"\\?\") {
         Some(rest) if !rest.starts_with("UNC") => PathBuf::from(rest),
         _ => p,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normal_mode_stores_paths_as_they_are() {
+        let p = Path::new("/home/ann/My.vault");
+        assert_eq!(encode(p, None), p);
+        assert_eq!(decode("/home/ann/My.vault", None), p);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn portable_mode_drops_its_own_drive_letter() {
+        let program = Some(Path::new(r"E:\VaultRust"));
+        let on_stick = encode(Path::new(r"E:\Passwords\My.vault"), program);
+        assert_eq!(on_stick, Path::new(r"\Passwords\My.vault"));
+        // On another computer the stick is F:.
+        let there = Some(Path::new(r"F:\VaultRust"));
+        assert_eq!(
+            decode(&on_stick.display().to_string(), there),
+            Path::new(r"F:\Passwords\My.vault")
+        );
+        // Vaults on other drives keep theirs.
+        let other = Path::new(r"C:\Users\ann\My.vault");
+        assert_eq!(encode(other, program), other);
+        assert_eq!(decode(r"C:\Users\ann\My.vault", there), other);
     }
 }

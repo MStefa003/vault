@@ -878,4 +878,20 @@ pub static TABLE: &[(&str, &str)] = &[
     ("VaultRust couldn't download the Firefox add-on. You can add it by hand:", "Το VaultRust δεν μπόρεσε να κατεβάσει το πρόσθετο του Firefox. Μπορείτε να το προσθέσετε με το χέρι:"),
     ("Firefox asks whether to add VaultRust: click “Add”. (If it opened a page with steps instead, the download didn't work; follow the steps there.)", "Το Firefox ρωτά αν θα προσθέσει το VaultRust: πατήστε «Προσθήκη». (Αν άνοιξε αντί γι' αυτό μια σελίδα με βήματα, η λήψη δεν πέτυχε· ακολουθήστε τα βήματα εκεί.)"),
     ("Firefox only adds extensions signed by Mozilla, so VaultRust downloads the signed add-on from its releases on GitHub.", "Το Firefox προσθέτει μόνο επεκτάσεις υπογεγραμμένες από τη Mozilla, γι' αυτό το VaultRust κατεβάζει το υπογεγραμμένο πρόσθετο από τις εκδόσεις του στο GitHub."),
+    // Portable mode.
+    ("That folder already has VaultRust in it", "Αυτός ο φάκελος έχει ήδη το VaultRust"),
+    ("Off in portable mode, which doesn't change the computers it runs on", "Ανενεργό στη φορητή λειτουργία, που δεν αλλάζει τους υπολογιστές στους οποίους εκτελείται"),
+    ("On · settings are kept in {}", "Ενεργή · οι ρυθμίσεις φυλάσσονται στο {}"),
+    ("Portable mode", "Φορητή λειτουργία"),
+    ("Put VaultRust on a USB stick", "Βάλτε το VaultRust σε USB stick"),
+    ("A portable copy runs on any computer and keeps its settings on the stick", "Ένα φορητό αντίγραφο εκτελείται σε οποιονδήποτε υπολογιστή και κρατά τις ρυθμίσεις του στο stick"),
+    ("Choose folder…", "Επιλογή φακέλου…"),
+    ("Where to put portable VaultRust", "Πού θα μπει το φορητό VaultRust"),
+    ("Portable VaultRust is ready: {}. To keep this vault there too, use Move… under Vault", "Το φορητό VaultRust είναι έτοιμο: {}. Για να είναι και αυτή η κρύπτη εκεί, χρησιμοποιήστε τη «Μετακίνηση…» στην ενότητα «Κρύπτη»"),
+    ("Couldn't make a portable copy: {e}", "Δεν ήταν δυνατή η δημιουργία φορητού αντιγράφου: {e}"),
+    // Reporting a problem.
+    ("Report a problem", "Αναφορά προβλήματος"),
+    ("Report a problem…", "Αναφορά προβλήματος…"),
+    ("Opens GitHub in your browser to describe what went wrong. Nothing from your vault is sent", "Ανοίγει το GitHub στο πρόγραμμα περιήγησης για να περιγράψετε τι πήγε στραβά. Τίποτα από την κρύπτη σας δεν αποστέλλεται"),
+    ("Couldn't open your browser", "Δεν ήταν δυνατό το άνοιγμα του προγράμματος περιήγησης"),
 ];

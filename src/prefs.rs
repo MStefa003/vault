@@ -1,6 +1,7 @@
 //! App-level preferences that must be known before any vault is unlocked:
 //! the colour theme and what the window's close button does. Stored in
-//! `%APPDATA%\VaultRust\prefs.txt` as `key=value` lines. Nothing here is
+//! `%APPDATA%\VaultRust\prefs.txt` (next to the program in portable mode)
+//! as `key=value` lines. Nothing here is
 //! secret; everything vault-specific stays inside the encrypted vault.
 
 use std::fs;
@@ -102,10 +103,7 @@ impl Default for AppPrefs {
 }
 
 fn store_path() -> Option<PathBuf> {
-    let base = std::env::var_os("APPDATA")
-        .or_else(|| std::env::var_os("XDG_CONFIG_HOME"))
-        .map(PathBuf::from)?;
-    Some(base.join("VaultRust").join("prefs.txt"))
+    Some(crate::portable::settings_dir()?.join("prefs.txt"))
 }
 
 impl AppPrefs {

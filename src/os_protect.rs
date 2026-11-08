@@ -999,6 +999,10 @@ const INSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\
 /// nothing when VaultRust wasn't installed with the installer.
 #[cfg(windows)]
 pub fn record_installed_version(version: &str) {
+    // A portable copy isn't the installed one.
+    if crate::portable::is_on() {
+        return;
+    }
     use windows_sys::Win32::System::Registry::{
         RegGetValueW, RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_SZ,
     };
@@ -1038,6 +1042,19 @@ pub fn record_installed_version(version: &str) {
 
 #[cfg(not(windows))]
 pub fn record_installed_version(_version: &str) {}
+
+/// Open the page for reporting a problem on GitHub in the default browser,
+/// when the user asks for it. It is the only web page VaultRust opens.
+/// Tests never start a browser.
+pub fn open_bug_report_page() -> bool {
+    if cfg!(test) {
+        return true;
+    }
+    std::process::Command::new("explorer.exe")
+        .arg(crate::update::bug_report_url())
+        .spawn()
+        .is_ok()
+}
 
 /// Whether this is the only running VaultRust in the user's session.
 pub enum Instance {

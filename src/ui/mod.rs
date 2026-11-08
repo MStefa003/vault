@@ -690,7 +690,8 @@ impl VaultRustApp {
             .store(matches!(self.screen, Screen::Main(_)), Ordering::Relaxed);
         self.toasts.show(ctx);
 
-        // Defence in depth: the app never opens URLs / launches a browser.
+        // Defence in depth: nothing on screen can open a URL / launch a
+        // browser. (Only "Report a problem" opens one web page, itself.)
         ctx.output_mut(|o| {
             o.commands
                 .retain(|c| !matches!(c, egui::OutputCommand::OpenUrl(_)))

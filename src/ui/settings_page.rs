@@ -207,6 +207,16 @@ fn vault_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
 
 /// Windows Hello quick unlock for this vault.
 fn hello_row(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
+    if crate::portable::is_on() {
+        widgets::setting_row(
+            ui,
+            tr("Unlock with Windows Hello"),
+            portable_off(),
+            0.0,
+            |_| {},
+        );
+        return;
+    }
     if !crate::hello::is_available() {
         widgets::setting_row(
             ui,
@@ -248,9 +258,58 @@ fn hello_row(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
     }
 }
 
+/// Description of the features portable mode turns off.
+pub(super) fn portable_off() -> &'static str {
+    tr("Off in portable mode, which doesn't change the computers it runs on")
+}
+
+/// Portable mode: whether it's on, or making a portable copy.
+fn portable_row(ui: &mut egui::Ui, svc: &mut Services) {
+    if let Some(dir) = crate::portable::program_dir() {
+        let desc = trf!(
+            "On · settings are kept in {}",
+            dir.join(crate::portable::DATA_DIR).display()
+        );
+        widgets::setting_row(ui, tr("Portable mode"), &desc, 80.0, |ui| {
+            ui.label(RichText::new(tr("On")).color(accent()));
+        });
+        return;
+    }
+    let mut make = false;
+    widgets::setting_row(
+        ui,
+        tr("Put VaultRust on a USB stick"),
+        tr("A portable copy runs on any computer and keeps its settings on the stick"),
+        160.0,
+        |ui| make = widgets::secondary_button(ui, tr("Choose folder…")).clicked(),
+    );
+    if !make || cfg!(test) {
+        return;
+    }
+    let Some(folder) = rfd::FileDialog::new()
+        .set_title(tr("Where to put portable VaultRust"))
+        .pick_folder()
+    else {
+        return;
+    };
+    match crate::portable::create_copy(&folder) {
+        Ok(exe) => svc.toasts.success(trf!(
+            "Portable VaultRust is ready: {}. To keep this vault there too, use Move… under Vault",
+            exe.display()
+        )),
+        Err(e) => svc
+            .toasts
+            .error(trf!("Couldn't make a portable copy: {e}", e)),
+    }
+}
+
 /// "Start with Windows". Testing builds never touch the real registry.
 fn startup_row(ui: &mut egui::Ui, svc: &mut Services) {
     use crate::os_protect::Autostart;
+    if crate::portable::is_on() {
+        widgets::setting_row(ui, tr("Start with Windows"), portable_off(), 0.0, |_| {});
+        return;
+    }
     let status = if cfg!(test) {
         Autostart::Off
     } else {
@@ -887,6 +946,20 @@ fn app_section(ui: &mut egui::Ui, ms: &mut MainState, svc: &mut Services) {
         widgets::setting_row(ui, tr("Auto-type"), &desc, 80.0, |ui| {
             status(ui, svc.hotkeys.auto_type)
         });
+        widgets::divider(ui, 16.0);
+        portable_row(ui, svc);
+        widgets::divider(ui, 16.0);
+        let mut report = false;
+        widgets::setting_row(
+            ui,
+            tr("Report a problem"),
+            tr("Opens GitHub in your browser to describe what went wrong. Nothing from your vault is sent"),
+            160.0,
+            |ui| report = widgets::secondary_button(ui, tr("Report a problem…")).clicked(),
+        );
+        if report && !crate::os_protect::open_bug_report_page() {
+            svc.toasts.error(tr("Couldn't open your browser"));
+        }
         ui.add_space(4.0);
         ui.label(faint(trf!(
             "VaultRust {} · your vault never leaves this computer · no telemetry",

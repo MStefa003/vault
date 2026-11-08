@@ -309,9 +309,54 @@ pub fn clean_up(exe: &Path) {
     let _ = std::fs::remove_file(sibling(exe, "new"));
 }
 
+/// GitHub's page for reporting a problem, with a short form and the
+/// version filled in. Nothing about the vault or the computer is included.
+pub fn bug_report_url() -> String {
+    let mode = if crate::portable::is_on() {
+        " (portable)"
+    } else {
+        ""
+    };
+    let body = format!(
+        "**What happened?**\n\n\n**What did you expect to happen?**\n\n\n\
+         **Steps to make it happen again**\n1. \n\n---\nVaultRust {}{mode}, {} {}\n",
+        current_version(),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    );
+    format!(
+        "https://github.com/{REPO}/issues/new?labels=bug&body={}",
+        query_encode(&body)
+    )
+}
+
+/// Percent-encode everything but unreserved characters (RFC 3986).
+fn query_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bug_report_page_is_on_github_with_the_version() {
+        let url = bug_report_url();
+        assert!(url.starts_with(&format!("https://github.com/{REPO}/issues/new?")));
+        assert!(url.contains(&query_encode(&current_version().to_string())));
+        // Only one query string, and nothing that would end it early.
+        assert_eq!(url.matches('?').count(), 1);
+        assert!(!url.contains('#') && !url.contains(' ') && !url.contains('\n'));
+        assert_eq!(query_encode("a b&c=d/é"), "a%20b%26c%3Dd%2F%C3%A9");
+    }
 
     fn keypair() -> ed25519_compact::KeyPair {
         ed25519_compact::KeyPair::from_seed(ed25519_compact::Seed::new([7; 32]))

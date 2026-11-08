@@ -27,6 +27,7 @@ pub mod import_export;
 pub mod kdbx;
 pub mod model;
 pub mod os_protect;
+pub mod portable;
 pub mod prefs;
 #[cfg(feature = "gui")]
 pub mod qr;
